@@ -105,10 +105,10 @@ void mm_opu(int8_t* A, int8_t* B, int32_t* C, size_t M, size_t N, size_t K) {
 
     size_t j = 0;
     while (j < N) {
-      // Clear the m0 tile
+      // Clear the m1 tile
       asm volatile("vsetvli %[vl], x0, e32, m4, ta, ma" : [vl]"=r"(vl));
       asm volatile("vmv.v.i v0, 0x0");
-      OPMVINBCAST(m0, v0);
+      OPMVINBCAST(m1, v0);
 
       // Set rows/cols to remaining rows/cols using vsetvli
       size_t cols;
@@ -120,13 +120,13 @@ void mm_opu(int8_t* A, int8_t* B, int32_t* C, size_t M, size_t N, size_t K) {
         asm volatile("vle8.v v1, (%0)" : : "r"(&B[N*k+j]));
         asm volatile("vsetvli x0, %[avl], e8, m1, ta, ma" : : [avl]"r"(M-i));
         asm volatile("vle8.v v0, (%0)" : : "r"(&A[M*k+i]));
-        OPMACC(m0, v1, v0);
+        OPMACC(m1, v1, v0);
       }
 
       // move row of c-tile to v-reg, accmulate wth c-row from memory, store back out
       asm volatile("vsetvli x0, %[avl], e32, m4, ta, ma" : : [avl]"r"(cols));
       for (size_t r = 0; r < rows; r++) {
-        OPMVOUT(v0, m0, r);
+        OPMVOUT(v0, m1, r);
         asm volatile("vle32.v v4, (%0)" : : "r"(&C[(i+r)*N+j]));
         asm volatile("vadd.vv v0, v0, v4");
         asm volatile("vse32.v v0, (%0)" : : "r"(&C[(i+r)*N+j]));
@@ -162,7 +162,7 @@ int main(void) {
   printf("maxvl is %lu\n", maxvl);
   /* for (size_t j = 0; j < 32; j++) { */
   /*   asm volatile("vle32.v v0, (%0)" : : "r"(&C[vl*j])); */
-  /*   OPMVIN(m0, v0, j); */
+  /*   OPMVIN(m1, v0, j); */
   /* } */
 
   /* for (size_t j = 0; j < 32; j++) { */
@@ -171,12 +171,12 @@ int main(void) {
   /* } */
 
   /* for (size_t j = 0; j < 32; j++) { */
-  /*   OPMVOUT(v0, m0, j); */
+  /*   OPMVOUT(v0, m1, j); */
   /*   //asm volatile("vse32.v v0, (%0)" : : "r"(&C_gold[vl*j])); */
   /* } */
 
   /* asm volatile("vle32.v v0, (%0)" : : "r"(&C[0])); */
-  /* OPMVINBCAST(m0, v0); */
+  /* OPMVINBCAST(m1, v0); */
 
   /* asm volatile("vle32.v v0, (%0)" : : "r"(&C[vl])); */
   /* OPMVINBCAST(m1, v0); */
