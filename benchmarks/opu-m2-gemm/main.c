@@ -56,14 +56,23 @@ void i32_m2_load_c(int* c, size_t ml, size_t N) {
 
 void i8_m2_loop_k(int8_t* at, int8_t* b, size_t ml, size_t M, size_t N, size_t K) {
   size_t k;
-  for (k = 0; k < K; k++) {
+  for (k = 0; k+2 <= K; k+=2) {
     asm volatile("vle8.v v16, (%0)" : : "r"(&at[k*M]));
     asm volatile("vle8.v v17, (%0)" : : "r"(&b[k*N]));
     VOPACC(m0, v17, v16);
 
     asm volatile("vle8.v v18, (%0)" : : "r"(&b[k*N + ml]));
     VOPACC(m1, v18, v16);
+
+    //unroll in k to avoid vrf raw hazards
+    asm volatile("vle8.v v19, (%0)" : : "r"(&at[(k+1)*M]));
+    asm volatile("vle8.v v20, (%0)" : : "r"(&b[(k+1)*N]));
+    VOPACC(m0, v20, v19);
+
+    asm volatile("vle8.v v21, (%0)" : : "r"(&b[(k+1)*N + ml]));
+    VOPACC(m1, v21, v19);
   }
+  //TODO: handle odd K
 }
 
 void i32_m2_store_c(int* c, size_t ml, size_t N) {
@@ -81,31 +90,17 @@ void i8_mm_bme_square(int32_t* c_in, int32_t* c_out, int8_t* at, int8_t* b, size
   size_t mlmax = vlenb;
 
   size_t vl;
-//   asm volatile("vsetvli %0, zero, e32, m4, ta, ma" : "=r"(vl));
   size_t i = 0;
   while (i + mlmax <= M) {
     size_t j = 0;
 
     while (j + 2*mlmax <= N) {
-      // printf("i = %ld, j = %ld\n", i, j);
-      // printf("mlmax = %ld\n", mlmax);
-      // printf("N = %ld\n", N);
-      // printf("i*N+j = %ld\n", (i*N)+j);
-      // printf("i*N+j+mlmax = %ld\n", (i*N)+j+mlmax);
-      // printf("i*N+j+2*mlmax = %ld\n", (i*N)+j+2*mlmax);
-      // printf("i*N+j+4*mlmax = %ld\n", (i*N)+j+4*mlmax);
-      // printf("c_in[%ld] = %p\n", (i*N)+j, c_in[(i*N)+j]);
-      // printf("at[%ld] = %p\n", i, at[i]);
-      // printf("b[%ld] = %p\n", j, b[j]);
-      // printf("at2[%ld] = %p\n", i+4*mlmax, at[i+4*mlmax]);
-      // printf("b2[%ld] = %p\n", j+4*mlmax, b[j+4*mlmax]);
       asm volatile("vsetvli zero, %0, e32, m4, ta, ma" : : "r"(mlmax));
       i32_m2_load_c(&c_in[(i*N)+j], mlmax, N);
       asm volatile("vsetvli zero, %0, e8, m1, ta, ma" : : "r"(mlmax));
       i8_m2_loop_k(&at[i], &b[j], mlmax, M, N, K);
       asm volatile("vsetvli zero, %0, e32, m4, ta, ma" : : "r"(mlmax));
       i32_m2_store_c(&c_out[(i*N)+j], mlmax, N);
-      // printf("c_out[%ld] = %p\n", (i*N)+j, c_out[(i*N)+j]);
       j += 2*mlmax;
     }
 
@@ -166,10 +161,10 @@ int i32_compare(int32_t* a, int32_t* b, size_t m, size_t n) {
 #define TCM_BASE 0x70000000
 
 #define MIN 16
-#define MAX 128
+#define MAX 64
 #define STEP 16
 #define VL 16
-#define DL 8
+#define DL 16
 
 int main(void) {
   size_t m = VL;
