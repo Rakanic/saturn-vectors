@@ -164,19 +164,17 @@ int i32_compare(int32_t* a, int32_t* b, size_t m, size_t n) {
 #define MAX 256
 #define STEP 64
 #define VL 64
-#define DL 64
+// #define DL 8
 
 int main(void) {
   size_t m = VL;
   size_t n = 2*VL;
 
-  // int8_t At[m*MAX];
-  // int8_t B[MAX*n];
   int8_t* B = (int8_t*)TCM_BASE;
   int8_t* At = (int8_t*)(TCM_BASE + n * MAX);
   int32_t C_init[m*n];
   int32_t C_bme[m*n];
-  // scalar copy of A, B
+  // scalar copy of A, B to avoid D1 coherence delays
   int32_t C_gold[m*n];
   int8_t Ats[m*MAX];
   int8_t Bs[MAX*n];
@@ -186,8 +184,7 @@ int main(void) {
   i8_init(Bs, MAX * n, 2);
   i32_init(C_init, m * n);
   
-  printf("i8 GEMM\n");
-  printf("vlen = %d; dlen = %d\n", VL*8, DL*8);
+  printf("i8 GEMM\nvlen = %d;\n", VL*8);
   printf("warmup cache:\n");
   printf("dim,ops,cycles\n");
   int64_t cyclest1 = read_csr(mcycle);
@@ -196,32 +193,27 @@ int main(void) {
   int64_t cyclest2 = read_csr(mcycle);
   int64_t cycles = cyclest2 - cyclest1;
   int64_t ops = m * n * MAX;
-  // printf("%d,%ld,%ld\n", MAX, ops, cycles);
   
   for (size_t k = MIN; k <= MAX; k += STEP) {
-    // printf("Initializing M, N, K = %ld %ld %ld\n", m, n, k);
-    
     i8_mm_scalar(C_init, C_gold, Ats, Bs, m, n, k);
-    // printf("\nTesting BME\n");
     cyclest1 = read_csr(mcycle);
     i8_mm_bme_square(C_init, C_bme, At, B, m, n, k);
     asm volatile("fence");
     cyclest2 = read_csr(mcycle);
-
-    // printf("C BME\n");
-    // print_matrix(C_bme, m, n);
-    cycles = cyclest2 - cyclest1;
-    ops = m * n * k;
-    printf("%ld,%ld,%ld\n", k, ops, cycles);
-        
+    
+    // verify against reference
     int r = 0;      
     r = i32_compare(C_bme, C_gold, m, n);
     if (r) {
         printf("Failure in BME M, N, K = %ld %ld %ld\n", m, n, k);
         exit(1);
     }
-    printf("SUCCESS in BME M, N, K = %ld %ld %ld\n\n", m, n, k);
+
+    // compute metrics and print to csv
+    cycles = cyclest2 - cyclest1;
+    ops = m * n * k;
+    printf("%ld,%ld,%ld\n", k, ops, cycles);
   }
-  // printf("SUCCESS testing mmBME\n");
+  printf("SUCCESS testing mmBME\n");
   return 0;
 }
