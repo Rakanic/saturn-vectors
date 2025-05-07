@@ -160,11 +160,11 @@ int i32_compare(int32_t* a, int32_t* b, size_t m, size_t n) {
 
 #define TCM_BASE 0x70000000
 
-#define MIN 16
-#define MAX 64
-#define STEP 16
-#define VL 16
-#define DL 16
+#define MIN 64
+#define MAX 256
+#define STEP 64
+#define VL 64
+#define DL 64
 
 int main(void) {
   size_t m = VL;
@@ -220,7 +220,7 @@ int main(void) {
         printf("Failure in BME M, N, K = %ld %ld %ld\n", m, n, k);
         exit(1);
     }
-    // printf("SUCCESS in BME M, N, K = %ld %ld %ld\n\n", m, n, k);
+    printf("SUCCESS in BME M, N, K = %ld %ld %ld\n\n", m, n, k);
   }
   // printf("SUCCESS testing mmBME\n");
   return 0;
