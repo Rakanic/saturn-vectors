@@ -174,9 +174,7 @@ int main(void) {
   i8_init(Bs, MAX * n, 2);
   i32_init(C_init, m * n);
   
-  printf("i8 GEMM\nvlen = %d;\n", VL*8);
-  printf("warmup cache:\n");
-  printf("dim,ops,cycles\n");
+  printf("i8 GEMM\nvlen = %d;\nwarmup cache:\ndim,ops,cycles\n", VL*8);
   int64_t cyclest1 = read_csr(mcycle);
   i8_mm_bme_square(C_init, C_bme, At, B, m, n, MAX);
   asm volatile("fence");
