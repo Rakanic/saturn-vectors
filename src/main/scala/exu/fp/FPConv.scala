@@ -35,12 +35,17 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
     val f2i = Input(Bool())
     val truncating = Input(Bool())
     val rto = Input(Bool())
+    val in_altfmt = Input(Bool())
 
     val out = Output(UInt(64.W))
     val exc = Output(Vec(8, UInt(FPConstants.FLAGS_SZ.W)))
   })
 
   def f2raw(t: FType, in: UInt) = rawFloatFromFN(t.exp, t.sig, in)
+
+  // def fp8e5m2_2raw8(t: FType, in: UInt) = rawFloatFromFN(t.exp, t.sig, in)
+  // def fp8e4m3_2raw16(t: FType, in: UInt) = raw16FromF8e4m3(t.exp, t.sig, in)
+
   def raw2raw(t: FType, in: RawFloat) = {
     val out = WireInit(resizeRawFloat(t.exp, t.sig, in))
     // workaround bug in resizeRawFloat
@@ -63,14 +68,25 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
   val in64 = Seq(io.in)
   val in32 = io.in.asTypeOf(Vec(2, UInt(32.W)))
   val in16 = io.in.asTypeOf(Vec(4, UInt(16.W)))
+  val in8e4m3 = io.in.asTypeOf(Vec(8, UInt(8.W)))
+  val in8e5m2 = io.in.asTypeOf(Vec(8, UInt(8.W)))
 
   val raw64 = VecInit(Seq(f2raw(FType.D, io.in)))
   val raw32 = VecInit(in32.map(u => f2raw(FType.S, u)))
   val raw16 = VecInit(in16.map(u => f2raw(FType.H, u)))
+  val raw8e4m3 = VecInit(in8e5m2.map(u => f2raw(FType.E4M3, u)))
+  val raw8e5m2 = VecInit(in8e5m2.map(u => f2raw(FType.E5M2, u)))
+  val raw8 = Mux(io.in_altfmt, raw8e5m2, raw8e4m3)
+
+  // val raw8e5m2as16 = VecInit(raw8e5m2.map(r => raw2raw(FType.H, r)))
+  // val f8e4m3as16 = VecInit(in8e4m3.map(r => fp8e4m3_2raw16(FType.H, r)))
 
   val raw32as64 = VecInit(raw32.map(r => raw2raw(FType.D, r)))
+  val raw8as64 = VecInit(raw8.map(r => raw2raw(FType.D, r)))
+  val raw8as32 = VecInit(raw8.map(r => raw2raw(FType.S, r)))
   val raw16as32 = VecInit(raw16.map(r => raw2raw(FType.S, r)))
   val raw16as64 = VecInit(raw16.map(r => raw2raw(FType.D, r)))
+  val raw8as16 = VecInit(raw8.map(r => raw2raw(FType.H, r)))
 
   val d2i = Seq(Module(new RecFNToINDynamic(FType.D.exp, FType.D.sig, Seq(16, 32, 64))))
   val s2i = Seq(Module(new RecFNToINDynamic(FType.S.exp, FType.S.sig, Seq(16, 32))))
@@ -136,11 +152,16 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
     i2f.io.detectTininess := hardfloat.consts.tininess_afterRounding
   }
 
+  val q2h = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.Q.exp, FType.Q.sig, FType.H.exp, FType.H.sig)))
   val h2s = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.H.exp, FType.H.sig, FType.S.exp, FType.S.sig)))
   val s2d = Seq.fill(1)(Module(new hardfloat.RecFNToRecFN(FType.S.exp, FType.S.sig, FType.D.exp, FType.D.sig)))
   val s2h = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.S.exp, FType.S.sig, FType.H.exp, FType.H.sig)))
   val d2s = Seq.fill(1)(Module(new hardfloat.RecFNToRecFN(FType.D.exp, FType.D.sig, FType.S.exp, FType.S.sig)))
 
+  q2h(0).io.in := RegEnable(raw2rec(FType.Q, raw8(0)), io.valid)
+  q2h(1).io.in := RegEnable(raw2rec(FType.Q, raw8(2)), io.valid)
+  q2h(2).io.in := RegEnable(raw2rec(FType.Q, raw8(4)), io.valid)
+  q2h(3).io.in := RegEnable(raw2rec(FType.Q, raw8(6)), io.valid)
   h2s(0).io.in := RegEnable(raw2rec(FType.H, raw16(0)), io.valid)
   h2s(1).io.in := RegEnable(raw2rec(FType.H, raw16(2)), io.valid)
   s2d(0).io.in := RegEnable(raw2rec(FType.S, raw32(0)), io.valid)
@@ -148,7 +169,7 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
   s2h(1).io.in := RegEnable(raw2rec(FType.S, raw32(1)), io.valid)
   d2s(0).io.in := RegEnable(raw2rec(FType.D, raw64(0)), io.valid)
 
-  (h2s ++ s2d ++ s2h ++ d2s).foreach { f2f =>
+  (q2h ++ h2s ++ s2d ++ s2h ++ d2s).foreach { f2f =>
     f2f.io.roundingMode := s1_frm
     f2f.io.detectTininess := hardfloat.consts.tininess_afterRounding
   }
@@ -179,11 +200,13 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
   val h2i_exc = h2i.map(f => RegEnable(toExc(f.io.intExceptionFlags), s1_valid))
 
   val s2d_out = s2d.map(f => RegEnable(FType.D.ieee(f.io.out), s1_valid))
+  val q2h_out = q2h.map(f => RegEnable(FType.H.ieee(f.io.out), s1_valid))
   val h2s_out = h2s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
   val d2s_out = d2s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
   val s2h_out = s2h.map(f => RegEnable(FType.H.ieee(f.io.out), s1_valid))
   val s2d_exc = s2d.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
   val h2s_exc = h2s.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
+  val q2h_exc = q2h.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
   val d2s_exc = d2s.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
   val s2h_exc = s2h.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
 
@@ -224,6 +247,10 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
       out := s2d_out(0)
       exc := VecInit.fill(8)(s2d_exc(0))
     }
+    when (s2_widen && s2_out_eew === 1.U) {
+      out := VecInit(q2h_out).asUInt
+      for (i <- 0 until 8) { exc(i) := q2h_exc(i/2) } // NO idea
+    }
     when (s2_widen && s2_out_eew === 2.U) {
       out := VecInit(h2s_out).asUInt
       for (i <- 0 until 8) { exc(i) := h2s_exc(i/4) }
@@ -232,7 +259,7 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
       out := d2s_out(0)
       exc := VecInit.fill(8)(d2s_exc(0))
     }
-    when (s2_out_eew === 1.U) {
+    when (!s2_widen && s2_out_eew === 1.U) {
       out := VecInit(s2h_out.map(o => 0.U(16.W) ## o)).asUInt
       for (i <- 0 until 8) { exc(i) := s2h_exc(i/4) }
     }
@@ -256,6 +283,7 @@ class FPConvPipe(implicit p: Parameters) extends PipelinedFunctionalUnit(3)(p) w
 
   val rvs2_data = io.pipe(0).bits.rvs2_data
   val vd_eew = io.pipe(0).bits.vd_eew
+  val altfmt = io.pipe(0).bits.altfmt
   val rvs2_eew = io.pipe(0).bits.rvs2_eew
 
   val hi = (io.pipe(0).bits.eidx >> (dLenOffBits.U - vd_eew))(0)
@@ -270,6 +298,7 @@ class FPConvPipe(implicit p: Parameters) extends PipelinedFunctionalUnit(3)(p) w
       rvs2_data)((i*64)+63,i*64)
 
     c.io.in_eew := rvs2_eew
+    c.io.in_altfmt := altfmt
     c.io.widen := ctrl_widen
     c.io.narrow := ctrl_narrow
     c.io.signed := ctrl_signed
