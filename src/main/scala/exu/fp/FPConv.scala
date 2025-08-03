@@ -152,16 +152,16 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
     i2f.io.detectTininess := hardfloat.consts.tininess_afterRounding
   }
 
-  val q2h = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.Q.exp, FType.Q.sig, FType.H.exp, FType.H.sig)))
+  val q2h = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.E5M3.exp, FType.E5M3.sig, FType.H.exp, FType.H.sig)))
   val h2s = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.H.exp, FType.H.sig, FType.S.exp, FType.S.sig)))
   val s2d = Seq.fill(1)(Module(new hardfloat.RecFNToRecFN(FType.S.exp, FType.S.sig, FType.D.exp, FType.D.sig)))
   val s2h = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.S.exp, FType.S.sig, FType.H.exp, FType.H.sig)))
   val d2s = Seq.fill(1)(Module(new hardfloat.RecFNToRecFN(FType.D.exp, FType.D.sig, FType.S.exp, FType.S.sig)))
 
-  q2h(0).io.in := RegEnable(raw2rec(FType.Q, raw8(0)), io.valid)
-  q2h(1).io.in := RegEnable(raw2rec(FType.Q, raw8(2)), io.valid)
-  q2h(2).io.in := RegEnable(raw2rec(FType.Q, raw8(4)), io.valid)
-  q2h(3).io.in := RegEnable(raw2rec(FType.Q, raw8(6)), io.valid)
+  q2h(0).io.in := RegEnable(raw2rec(FType.E5M3, raw8(0)), io.valid)
+  q2h(1).io.in := RegEnable(raw2rec(FType.E5M3, raw8(2)), io.valid)
+  q2h(2).io.in := RegEnable(raw2rec(FType.E5M3, raw8(4)), io.valid)
+  q2h(3).io.in := RegEnable(raw2rec(FType.E5M3, raw8(6)), io.valid)
   h2s(0).io.in := RegEnable(raw2rec(FType.H, raw16(0)), io.valid)
   h2s(1).io.in := RegEnable(raw2rec(FType.H, raw16(2)), io.valid)
   s2d(0).io.in := RegEnable(raw2rec(FType.S, raw32(0)), io.valid)
