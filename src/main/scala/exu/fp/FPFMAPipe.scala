@@ -32,6 +32,7 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   })
 
   val out_eew_pipe = Pipe(io.valid, io.out_eew, depth-1)
+  val in_eew_8_pipe = Pipe(io.valid, io.a_eew === 0.U || io.b_eew === 0.U, depth-1)
   val out_altfmt_pipe = Pipe(io.valid, io.altfmt, depth-1)
   val frm_pipe = Pipe(io.valid, io.frm, depth-1)
 
@@ -47,6 +48,16 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   val bf16a = io.a.asTypeOf(Vec(4, UInt(16.W))).map(f => FType.BF16.recode(f))
   val bf16b = io.b.asTypeOf(Vec(4, UInt(16.W))).map(f => FType.BF16.recode(f))
   val bf16c = io.c.asTypeOf(Vec(4, UInt(16.W))).map(f => FType.BF16.recode(f))
+  val e5m2a = io.a.asTypeOf(Vec(8, UInt(8.W))).map(f => FType.E5M2.recode(f))
+  val e5m2b = io.b.asTypeOf(Vec(8, UInt(8.W))).map(f => FType.E5M2.recode(f))
+  val e5m2c = io.c.asTypeOf(Vec(8, UInt(8.W))).map(f => FType.E5M2.recode(f))
+  val e4m3a = io.a.asTypeOf(Vec(8, UInt(8.W))).map(f => FType.E4M3.recode(f))
+  val e4m3b = io.b.asTypeOf(Vec(8, UInt(8.W))).map(f => FType.E4M3.recode(f))
+  val e4m3c = io.c.asTypeOf(Vec(8, UInt(8.W))).map(f => FType.E4M3.recode(f))
+  val f8a = e5m2a.zip(e4m3a).map { case (e5, e4) => Mux(io.altfmt, e5, e4) }
+  val f8b = e5m2b.zip(e4m3b).map { case (e5, e4) => Mux(io.altfmt, e5, e4) }
+  val f8c = e5m2c.zip(e4m3c).map { case (e5, e4) => Mux(io.altfmt, e5, e4) }
+
 
   def widen(in: UInt, inT: FType, outT: FType, active: Bool): UInt = {
     val widen = Module(new hardfloat.RecFNToRecFN(inT.exp, inT.sig, outT.exp, outT.sig))
@@ -56,10 +67,12 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
     widen.io.out
   }
 
+  val f8_widen = io.out_eew === 1.U && (io.a_eew === 0.U || io.b_eew === 0.U)
+
   val dfma_valid = io.valid && io.out_eew === 3.U
   val sfma_valid = io.valid && io.out_eew === 2.U
-  val hfma_valid = io.valid && io.out_eew === 1.U && !io.altfmt
-  val bf16fma_valid = io.valid && io.out_eew === 1.U && io.altfmt
+  val hfma_valid = io.valid && io.out_eew === 1.U && !io.altfmt && !f8_widen
+  val bf16fma_valid = io.valid && ((io.out_eew === 1.U && io.altfmt) || f8_widen)
 
   val swa = Seq(widen(sa(0), FType.S, FType.D, io.out_eew === 3.U && io.a_eew === 2.U))
   val swb = Seq(widen(sb(0), FType.S, FType.D, io.out_eew === 3.U && io.b_eew === 2.U))
@@ -82,6 +95,21 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   val bf16wc = Seq(
     widen(hc(0), FType.BF16, FType.S, io.out_eew === 2.U && io.c_eew === 1.U && io.altfmt),
     widen(hc(2), FType.BF16, FType.S, io.out_eew === 2.U && io.c_eew === 1.U && io.altfmt))
+  val f8wa = Seq(
+    widen(f8a(0), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U),
+    widen(f8a(2), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U),
+    widen(f8a(4), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U),
+    widen(f8a(6), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U))
+  val f8wb = Seq(
+    widen(f8b(0), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U),
+    widen(f8b(2), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U),
+    widen(f8b(4), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U),
+    widen(f8b(6), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U))
+  val f8wc = Seq(
+    widen(f8c(0), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U),
+    widen(f8c(2), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U),
+    widen(f8c(4), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U),
+    widen(f8c(6), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U))
 
   val da_in = da.zip(swa).map(t => Mux(io.out_eew =/= io.a_eew, t._2, t._1))
   val db_in = db.zip(swb).map(t => Mux(io.out_eew =/= io.b_eew, t._2, t._1))
@@ -95,9 +123,9 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   val hb_in = hb
   val hc_in = hc
 
-  val bf16a_in = bf16a
-  val bf16b_in = bf16b
-  val bf16c_in = bf16c
+  val bf16a_in = bf16a.zip(f8wa).map(t => Mux(io.out_eew =/= io.a_eew, t._2, t._1))
+  val bf16b_in = bf16b.zip(f8wb).map(t => Mux(io.out_eew =/= io.b_eew, t._2, t._1))
+  val bf16c_in = bf16c.zip(f8wc).map(t => Mux(io.out_eew =/= io.c_eew, t._2, t._1))
 
   val s1_op = RegEnable(io.op, io.valid)
   val s1_frm = RegEnable(io.frm, io.valid)
@@ -105,10 +133,12 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   io.out := DontCare
   io.exc := DontCare
 
+  val altfmt_bf16 = Mux(in_eew_8_pipe.bits, out_altfmt_pipe.bits, true.B)
+
   (buildFP64.option((dfma_valid, FType.D, da_in, db_in, dc_in, false.B)) ++ Seq(
     (sfma_valid, FType.S, sa_in, sb_in, sc_in, false.B),
     (hfma_valid, FType.H, ha_in, hb_in, hc_in, false.B),
-    (bf16fma_valid, FType.BF16, bf16a_in, bf16b_in, bf16c_in, true.B),
+    (bf16fma_valid, FType.BF16, bf16a_in, bf16b_in, bf16c_in, altfmt_bf16),
   )).foreach { case (fma_valid, ftype, a, b, c, ftype_alt) => {
     val n = 64 / ftype.ieeeWidth
     val s1_valid = RegNext(fma_valid, false.B)
@@ -148,7 +178,7 @@ trait FMAFactory extends FunctionalUnitFactory {
     FWMACC.VV, FWMACC.VF, FWNMACC.VV, FWNMACC.VF,
     FWMSAC.VV, FWMSAC.VF, FWNMSAC.VV, FWNMSAC.VF,
     FREDOSUM.VV, FREDUSUM.VV, FWREDOSUM.VV, FWREDUSUM.VV
-  ).map(_.pipelined(depth)).map(_.restrictSEW(1,2,3)).flatten
+  ).map(_.pipelined(depth)).map(_.restrictSEW(0,1,2,3)).flatten
 }
 
 case class SIMDFPFMAFactory(depth: Int, elementWiseFP64: Boolean = false) extends FMAFactory {
@@ -198,11 +228,23 @@ class FPFMAPipe(depth: Int, elementwiseFP64: Boolean)(implicit p: Parameters) ex
     val fma_pipe = Module(new TandemFMAPipe(depth, i == 0 || !elementwiseFP64))
     val widening_vs1_bits = Mux(vd_eew === 3.U,
       0.U(32.W) ## extractElem(io.pipe(0).bits.rvs1_data, 2.U, eidx + i.U)(31,0),
-      Cat(
-        0.U(16.W),
-        extractElem(io.pipe(0).bits.rvs1_data, 1.U, eidx + (i << 1).U + 1.U)(15,0),
-        0.U(16.W),
-        extractElem(io.pipe(0).bits.rvs1_data, 1.U, eidx + (i << 1).U + 0.U)(15,0)
+      Mux(vd_eew === 2.U,
+        Cat(
+          0.U(16.W),
+          extractElem(io.pipe(0).bits.rvs1_data, 1.U, eidx + (i << 1).U + 1.U)(15,0),
+          0.U(16.W),
+          extractElem(io.pipe(0).bits.rvs1_data, 1.U, eidx + (i << 1).U + 0.U)(15,0)
+        ), 
+        Cat(
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs1_data, 0.U, eidx + (i << 2).U + 3.U)(7,0),
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs1_data, 0.U, eidx + (i << 2).U + 2.U)(7,0), 
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs1_data, 0.U, eidx + (i << 2).U + 1.U)(7,0),
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs1_data, 0.U, eidx + (i << 2).U + 0.U)(7,0)
+        )
       )
     )
     val vs1_bits = Mux((i == 0 && elementwiseFP64).B && vd_eew === 3.U,
@@ -212,11 +254,23 @@ class FPFMAPipe(depth: Int, elementwiseFP64: Boolean)(implicit p: Parameters) ex
 
     val widening_vs2_bits = Mux(vd_eew === 3.U,
       0.U(32.W) ## extractElem(io.pipe(0).bits.rvs2_data, 2.U, eidx + i.U)(31,0),
-      Cat(
-        0.U(16.W),
-        extractElem(io.pipe(0).bits.rvs2_data, 1.U, eidx + (i << 1).U + 1.U)(15,0),
-        0.U(16.W),
-        extractElem(io.pipe(0).bits.rvs2_data, 1.U, eidx + (i << 1).U + 0.U)(15,0)
+      Mux(vd_eew === 2.U,
+        Cat(
+          0.U(16.W),
+          extractElem(io.pipe(0).bits.rvs2_data, 1.U, eidx + (i << 1).U + 1.U)(15,0),
+          0.U(16.W),
+          extractElem(io.pipe(0).bits.rvs2_data, 1.U, eidx + (i << 1).U + 0.U)(15,0)
+        ),
+        Cat(
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs2_data, 0.U, eidx + (i << 2).U + 3.U)(7,0),
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs2_data, 0.U, eidx + (i << 2).U + 2.U)(7,0), 
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs2_data, 0.U, eidx + (i << 2).U + 1.U)(7,0),
+          0.U(8.W),
+          extractElem(io.pipe(0).bits.rvs2_data, 0.U, eidx + (i << 2).U + 0.U)(7,0)
+        )
       )
     )
     val vs2_bits = Mux((i == 0 && elementwiseFP64).B && vd_eew === 3.U,
