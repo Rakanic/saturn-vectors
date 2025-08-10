@@ -1,73 +1,50 @@
 #!/usr/bin/env python3
-import math, struct, sys, json, argparse, textwrap
+#!/usr/bin/env python3
+import math, struct, sys, json, argparse
 
 # ---------- FP8 E4M3 encode/decode (IEEE-like, bias=7) ----------
-# Format: 1 sign bit, 4 exponent bits (bias=7), 3 fraction bits
-# Special cases:
-#   exp=0, frac=0 => zero
-#   exp=0, frac!=0 => subnormal: value = sign * 2^(1-bias) * (frac / 2^3)
-#   exp=0xF, frac=0 => +/- Infinity
-#   exp=0xF, frac!=0 => NaN
-# Rounding: round-to-nearest, ties-to-even
 BIAS_E4M3 = 7
 
 def _round_half_even(x: float) -> int:
-    # x can be positive
     f = math.floor(x)
     r = x - f
     if r > 0.5: return f + 1
     if r < 0.5: return f
-    # tie
     return f if (f & 1) == 0 else f + 1
 
 def float_to_fp8_e4m3(x: float) -> int:
-    # Returns 8-bit int (0..255) bit pattern
-    # Handle NaN / Inf
     if math.isnan(x):
-        return 0b01111101  # quiet NaN (sign=0, exp=0xF, frac!=0)
+        return 0b01111101  # quiet NaN
     sign = 1 if math.copysign(1.0, x) < 0 else 0
     ax = abs(x)
     if math.isinf(ax):
         return (sign << 7) | (0xF << 3) | 0
-    
     if ax == 0.0:
         return sign << 7
 
-    # Normal/subnormal split
-    # Want E and y such that ax = y * 2^E with y in [1,2)
     m, e = math.frexp(ax)  # ax = m * 2^e, m in [0.5,1)
     E = e - 1
     y = m * 2.0  # in [1,2)
 
-    # Try normal first
     exp_code = E + BIAS_E4M3
     if 1 <= exp_code <= 0xE:
-        frac_unrounded = (y - 1.0) * 8.0  # because 3 fraction bits
+        frac_unrounded = (y - 1.0) * 8.0
         frac = _round_half_even(frac_unrounded)
         if frac == 8:
-            # carry into exponent
             frac = 0
             exp_code += 1
             if exp_code >= 0xF:
-                # overflow to Inf
                 return (sign << 7) | (0xF << 3) | 0
-        if exp_code <= 0:
-            # underflow into subnormal after rounding
-            # fall-through into subnormal path
-            pass
-        else:
+        if exp_code > 0:
             return (sign << 7) | ((exp_code & 0xF) << 3) | (frac & 0x7)
 
-    # Subnormal region
-    # value = sign * 2^(1-bias) * (frac/8). Solve for frac
-    # frac_target = ax / 2^(1-bias) * 8 = ax * 2^(bias-1+3) = ax * 2^(BIAS_E4M3+2) = ax * 2^9 = ax * 512
-    frac_target = ax * 512.0
+    # subnormal
+    frac_target = ax * 512.0  # 2^(BIAS_E4M3+2)
     frac = _round_half_even(frac_target)
     if frac == 0:
         return sign << 7
     if frac >= 8:
-        # Rounds up to the smallest normal
-        return (sign << 7) | (0x1 << 3) | 0
+        return (sign << 7) | (0x1 << 3) | 0  # smallest normal
     return (sign << 7) | (0x0 << 3) | (frac & 0x7)
 
 def fp8_e4m3_to_float(bits: int) -> float:
@@ -75,27 +52,21 @@ def fp8_e4m3_to_float(bits: int) -> float:
     sign = -1.0 if (bits >> 7) & 1 else 1.0
     exp  = (bits >> 3) & 0xF
     frac = bits & 0x7
-
     if exp == 0:
         if frac == 0:
             return math.copysign(0.0, -1.0 if sign < 0 else 1.0) * 0.0
-        # subnormal: 2^(1-bias) * (frac/8)
         return sign * math.ldexp(frac / 8.0, 1 - BIAS_E4M3)
     if exp == 0xF:
         if frac == 0:
             return sign * float('inf')
         return float('nan')
-    # normal: 2^(exp-bias) * (1 + frac/8)
     return sign * math.ldexp(1.0 + (frac / 8.0), exp - BIAS_E4M3)
 
-# ---------- Helpers for float32 and int32 bit patterns ----------
-
+# ---------- float32 helpers ----------
 def to_float32(x: float) -> float:
-    # quantize to IEEE-754 binary32
     return struct.unpack('<f', struct.pack('<f', float(x)))[0]
 
 def float32_to_int32_bits(x: float) -> int:
-    # return signed int32 value with same bit pattern as float32
     u = int.from_bytes(struct.pack('<f', float(x)), 'little', signed=False)
     return u - (1 << 32) if u >= (1 << 31) else u
 
@@ -103,35 +74,15 @@ def int8_signed(u8: int) -> int:
     u8 &= 0xFF
     return u8 - 256 if u8 >= 128 else u8
 
-def bits8(u8: int) -> str:
-    return format(u8 & 0xFF, '08b')
-
-def bits32(i32: int) -> str:
-    # show two's complement 32-bit bitstring of signed int32
-    return format(i32 & 0xFFFFFFFF, '032b')
-
-# ---------- Core: outer product ----------
-
+# ---------- Outer product ----------
 def outer_product_fp8_e4m3(a_fp, b_fp):
-    """
-    a_fp, b_fp: iterables of 16 Python floats (they will be quantized to FP8 E4M3)
-    Returns dict with:
-      - a_bits, b_bits: list of 16 integers in [-128,127] (signed int8 view of FP8 codes)
-      - a_bits_bin, b_bits_bin: 8-bit binary strings
-      - a_quant, b_quant: quantized float values (decoded from FP8)
-      - C_float32: 16x16 list of lists of float32
-      - C_int32: 16x16 list of lists of signed int32 raw bit patterns of the float32s
-    """
     a_bits_u8 = [float_to_fp8_e4m3(x) for x in a_fp]
     b_bits_u8 = [float_to_fp8_e4m3(x) for x in b_fp]
     a_quant = [fp8_e4m3_to_float(u) for u in a_bits_u8]
     b_quant = [fp8_e4m3_to_float(u) for u in b_bits_u8]
-
-    # Quantize inputs to float32 before multiplication
     a_q32 = [to_float32(x) for x in a_quant]
     b_q32 = [to_float32(x) for x in b_quant]
 
-    # Outer product in float32 with final quantize to float32
     C_float32 = []
     C_int32 = []
     for i in range(16):
@@ -156,9 +107,8 @@ def outer_product_fp8_e4m3(a_fp, b_fp):
     }
     return out
 
-def pretty_print_result(res):
+def pretty_print_result_outer(res, comma_int32=False):
     def fmtf(x: float) -> str:
-        # compact float formatting
         return f"{x:.6g}"
 
     print("=== Inputs encoded to FP8 E4M3 (as signed int8 and 8-bit binary) ===")
@@ -179,29 +129,132 @@ def pretty_print_result(res):
     for row in res["C_int32"]:
         print("  ", " ".join(f"{x:>11d}" for x in row))
 
+    if comma_int32:
+        print("\n=== C as int32 (comma-separated for easy copy) ===")
+        for row in res["C_int32"]:
+            print("  ", ", ".join(str(x) for x in row))
+
+# ---------- Matrix multiply ----------
+def quantize_matrix_fp8_e4m3(M):
+    bits = [[float_to_fp8_e4m3(x) for x in row] for row in M]
+    q = [[to_float32(fp8_e4m3_to_float(b)) for b in row] for row in bits]
+    bits_i8 = [[int8_signed(b) for b in row] for row in bits]
+    bits_bin = [[format(b & 0xFF, '08b') for b in row] for row in bits]
+    return bits_i8, bits_bin, q
+
+def matmul_fp8_e4m3(A_fp, B_fp):
+    # A: MxK, B: KxN
+    M = len(A_fp)
+    K = len(A_fp[0]) if M > 0 else 0
+    K2 = len(B_fp)
+    N = len(B_fp[0]) if K2 > 0 else 0
+    if K2 != K:
+        raise ValueError("Inner dims must match: A is MxK, B is KxN")
+
+    A_i8, A_bin, A_q32 = quantize_matrix_fp8_e4m3(A_fp)
+    B_i8, B_bin, B_q32 = quantize_matrix_fp8_e4m3(B_fp)
+
+    C_f32 = [[to_float32(0.0) for _ in range(N)] for _ in range(M)]
+    C_i32 = [[0 for _ in range(N)] for _ in range(M)]
+    for i in range(M):
+        for j in range(N):
+            acc = to_float32(0.0)
+            for k in range(K):
+                prod = to_float32(A_q32[i][k] * B_q32[k][j])
+                acc = to_float32(acc + prod)
+            C_f32[i][j] = acc
+            C_i32[i][j] = float32_to_int32_bits(acc)
+
+    return {
+        "A_bits": A_i8, "B_bits": B_i8,
+        "A_bits_bin": A_bin, "B_bits_bin": B_bin,
+        "A_quant": A_q32, "B_quant": B_q32,
+        "C_float32": C_f32, "C_int32": C_i32
+    }
+
+def pretty_print_result_matmul(res, comma_int32=False):
+    def fmtf(x: float) -> str: return f"{x:.6g}"
+
+    print("=== A encoded to FP8 E4M3 (int8) ===")
+    for row in res["A_bits"]: print("  ", row)
+    print("=== B encoded to FP8 E4M3 (int8) ===")
+    for row in res["B_bits"]: print("  ", row)
+
+    print("\n=== A_quant (decoded FP8 -> float32) ===")
+    for row in res["A_quant"]: print("  ", [fmtf(x) for x in row])
+    print("=== B_quant (decoded FP8 -> float32) ===")
+    for row in res["B_quant"]: print("  ", [fmtf(x) for x in row])
+
+    print("\n=== C = A @ B (float32) ===")
+    for row in res["C_float32"]:
+        print("  ", " ".join(f"{fmtf(x):>10}" for x in row))
+
+    print("\n=== C as int32 raw bit patterns (two's complement) ===")
+    for row in res["C_int32"]:
+        print("  ", " ".join(f"{x:>11d}" for x in row))
+
+    if comma_int32:
+        print("\n=== C as int32 (comma-separated for easy copy) ===")
+        for row in res["C_int32"]:
+            print("  ", ", ".join(str(x) for x in row))
+
+# ---------- CLI ----------
 def main():
-    parser = argparse.ArgumentParser(
-        description="Outer product of two length-16 FP8 E4M3 vectors, computing in float32 and printing int32 bit patterns."
-    )
+    parser = argparse.ArgumentParser(description="FP8 E4M3 outer product and matmul utilities.")
+    # Outer product
     parser.add_argument("--a", type=str, default="", help="JSON list of 16 floats for vector a")
     parser.add_argument("--b", type=str, default="", help="JSON list of 16 floats for vector b")
-    parser.add_argument("--example", action="store_true", help="Run a built-in example if no inputs are provided")
+    parser.add_argument("--outer", action="store_true", help="Run outer product with the given --a/--b or example")
+    # Matrix multiply
+    parser.add_argument("--A", type=str, default="", help="JSON 2D list for matrix A (MxK)")
+    parser.add_argument("--B", type=str, default="", help="JSON 2D list for matrix B (KxN)")
+    parser.add_argument("--matmul", action="store_true", help="Run matrix multiply with given --A/--B or example")
+    # Output tweaks
+    parser.add_argument("--comma-int32", action="store_true", help="Also print C_int32 rows as comma-separated lists for easy copy")
+    parser.add_argument("--example-size", type=int, default=16, help="Size for example square matrices (default 16)")
     args = parser.parse_args()
 
-    if args.a and args.b:
-        a = json.loads(args.a)
-        b = json.loads(args.b)
-        if len(a) != 16 or len(b) != 16:
-            print("Both --a and --b must be length-16 lists.", file=sys.stderr)
-            sys.exit(1)
-    else:
-        # Example: evenly spaced values in [-1.0, 1.0]
+    ran_any = False
+
+    if args.outer:
+        if args.a and args.b:
+            a = json.loads(args.a)
+            b = json.loads(args.b)
+            if len(a) != 16 or len(b) != 16:
+                print("Both --a and --b must be length-16 lists.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            a = [ -1.0 + (2.0 * i / 15.0) for i in range(16) ]
+            b = [  1.0 - (2.0 * i / 15.0) for i in range(16) ]
+        res = outer_product_fp8_e4m3(a, b)
+        pretty_print_result_outer(res, comma_int32=args.comma_int32)
+        ran_any = True
+
+    if args.matmul:
+        if args.A and args.B:
+            A = json.loads(args.A); B = json.loads(args.B)
+        else:
+            n = args.example_size
+            A = [[-1.0 + 2.0*(i*n+j)/(n*n-1) for j in range(n)] for i in range(n)]
+            B = [[ 1.0 - 2.0*(j*n+i)/(n*n-1) for j in range(n)] for i in range(n)]
+        resM = matmul_fp8_e4m3(A, B)
+        pretty_print_result_matmul(resM, comma_int32=args.comma_int32)
+        ran_any = True
+
+    if not ran_any:
+        print("No mode selected; running both examples. Use --outer and/or --matmul to choose.\n")
+        # Outer example
         a = [ -1.0 + (2.0 * i / 15.0) for i in range(16) ]
         b = [  1.0 - (2.0 * i / 15.0) for i in range(16) ]
-
-    res = outer_product_fp8_e4m3(a, b)
-    pretty_print_result(res)
+        res = outer_product_fp8_e4m3(a, b)
+        pretty_print_result_outer(res, comma_int32=True)
+        print("\n" + "="*80 + "\n")
+        # Matmul example: 16x16 x 16x16
+        n = 16
+        A = [[-1.0 + 2.0*(i*n+j)/(n*n-1) for j in range(n)] for i in range(n)]
+        B = [[ 1.0 - 2.0*(j*n+i)/(n*n-1) for j in range(n)] for i in range(n)]
+        resM = matmul_fp8_e4m3(A, B)
+        pretty_print_result_matmul(resM, comma_int32=True)
 
 if __name__ == "__main__":
     main()
-
