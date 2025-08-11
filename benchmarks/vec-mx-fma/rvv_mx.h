@@ -11,5 +11,8 @@
 #define SEW_E32 "10"
 #define SEW_E64 "11"
 
-#define VSETVLI_ALTFMT(vl, avl, sew, lmul) \
-	asm volatile(".insn i 0x57, 0x7, %0, %1, 0b0001000" sew lmul : "=r"(vl) : "r"(avl))
+#define VSETVLI_ALTFMT(vl, avl, sew, lmul, alt) \
+	asm volatile(".insn i 0x57, 0x7, %0, %1, 0b000" #alt "000" sew lmul : "=r"(vl) : "r"(avl))
+
+#define VSETVLI_ALTFMT_X0(avl, sew, lmul, alt) \
+	asm volatile(".insn i 0x57, 0x7, zero, %0, 0b000" #alt "000" sew lmul :: "r"(avl))
