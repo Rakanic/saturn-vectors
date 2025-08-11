@@ -112,7 +112,6 @@ class OuterProductCell(implicit p: Parameters) extends CoreModule()(p) with HasO
 
   // Matrix Register + Logic
   val regs = Reg(Vec(regsPerCell, UInt(opuParams.cWidthRec.W)))
-  val recMvinData = FType.S.recode(io.mvin_data.asUInt)
 
   // widen the inputs
   val e4m3a = FType.E4M3.recode(io.in_l.asUInt)
@@ -145,7 +144,7 @@ class OuterProductCell(implicit p: Parameters) extends CoreModule()(p) with HasO
     val subtile_match = io.mrf_idx(log2Ceil(regsPerTileReg)-1,0) === (i % regsPerTileReg).U
 
     when (tile_match && (((io.mvin || io.macc) && subtile_match) || io.mvin_bcast)) {
-      regs(i) := Mux(io.macc, sum, recMvinData)
+      regs(i) := Mux(io.macc, sum, FType.S.recode(io.mvin_data.asUInt))
     }
   }
 

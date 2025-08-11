@@ -52,7 +52,8 @@ bmarks = \
 	opu-sq-gemm \
 	opu-m2-gemm \
 	vec-optest \
-	vec-fp8OPUTest
+	vec-fp8OPUTest \
+	vec-OPUmatmulFp8
 
 cpp_bmarks = \
 	vec-tasks \
