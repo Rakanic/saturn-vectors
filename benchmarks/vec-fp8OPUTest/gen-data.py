@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import math, struct, sys, json, argparse
 
-# ---------- FP8 E4M3 encode/decode (IEEE-like, bias=7) ----------
+# ---------- FP8 E4M3 encode/ decode (IEEE-like, bias=7) ----------
 BIAS_E4M3 = 7
 
 def _round_half_even(x: float) -> int:
@@ -74,7 +74,15 @@ def int8_signed(u8: int) -> int:
     return u8 - 256 if u8 >= 128 else u8
 
 # ---------- Outer product with accumulate ----------
-def outer_product_fp8_e4m3(a_fp, b_fp, acc_scalar=1.5):
+# CHANGED: added repeats to accumulate identical outer-product results before adding bias.
+def outer_product_fp8_e4m3(a_fp, b_fp, acc_scalar=1.5, repeats=2):
+    """
+    Computes: sum_{r=1..repeats} (a ⊗ b)  +  acc_scalar
+    All arithmetic is simulated in float32 with round-to-nearest-even on each add.
+    """
+    if repeats < 1:
+        raise ValueError("repeats must be >= 1")
+
     acc_s32 = to_float32(acc_scalar)
     a_bits_u8 = [float_to_fp8_e4m3(x) for x in a_fp]
     b_bits_u8 = [float_to_fp8_e4m3(x) for x in b_fp]
@@ -88,13 +96,19 @@ def outer_product_fp8_e4m3(a_fp, b_fp, acc_scalar=1.5):
         row_f, row_i = [], []
         for j in range(16):
             prod = to_float32(a_q32[i] * b_q32[j])
-            out  = to_float32(prod + acc_s32)  # accumulate constant in float32
+            acc = to_float32(0.0)
+            for _ in range(repeats):
+                acc = to_float32(acc + prod)
+            out  = to_float32(acc + acc_s32)
             row_f.append(out)
             row_i.append(float32_to_int32_bits(out))
         C_float32.append(row_f)
         C_int32.append(row_i)
 
     return {
+        "repeats": repeats,
+        "a_input": a_fp,              # NEW: keep originals for printing
+        "b_input": b_fp,              # NEW
         "a_bits": [int8_signed(u) for u in a_bits_u8],
         "b_bits": [int8_signed(u) for u in b_bits_u8],
         "a_bits_bin": [format(u, '08b') for u in a_bits_u8],
@@ -105,33 +119,44 @@ def outer_product_fp8_e4m3(a_fp, b_fp, acc_scalar=1.5):
         "C_int32": C_int32,
     }
 
+# CHANGED: pretty printer mentions repeats
 def pretty_print_result_outer(res, comma_int32=False, acc_scalar=1.5):
     def fmtf(x: float) -> str: return f"{x:.6g}"
-    print(f"=== Outer Product: result = (fp8 * fp8) + {acc_scalar} (all in float32) ===")
+    repeats = res.get("repeats", 1)
+    print(f"=== Outer Product: result = sum_{{r=1..{repeats}}}(fp8 * fp8) + {acc_scalar} (all in float32) ===")
     print("=== Inputs encoded to FP8 E4M3 (as signed int8 and 8-bit binary) ===")
     print("a_bits (int8):", res["a_bits"])
     print("a_bits (bin) :", res["a_bits_bin"])
     print("b_bits (int8):", res["b_bits"])
     print("b_bits (bin) :", res["b_bits_bin"])
 
+    # NEW: copy-friendly A, B, and At (A is a 16x1 vector → At is 1x16)
+    if "a_input" in res and "b_input" in res:
+        print("\n=== A (comma-separated) ===")
+        print("  ", ", ".join(fmtf(x) for x in res["a_input"]))
+        print("=== At (comma-separated) ===")
+        print("  ", ", ".join(fmtf(x) for x in res["a_input"]))  # At is row form
+        print("=== B (comma-separated) ===")
+        print("  ", ", ".join(fmtf(x) for x in res["b_input"]))
+
     print("\n=== Quantized inputs (decoded FP8 -> float32) ===")
     print("a_quant:", [fmtf(x) for x in res["a_quant"]])
     print("b_quant:", [fmtf(x) for x in res["b_quant"]])
 
-    print("\n=== C = a ⊗ b, then +acc (float32) ===")
+    print(f"\n=== C = sum_{{r=1..{repeats}}}(a ⊗ b) + acc (float32) ===")
     for row in res["C_float32"]:
         print("  ", " ".join(f"{fmtf(x):>10}" for x in row))
 
     print("\n=== C as int32 raw bit patterns (two's complement) ===")
     for row in res["C_int32"]:
-        print("  ", " ".join(f"{x:>11d}" for x in row))
+        print("  ", ",".join(f"{x:>11d}" for x in row), ",")
 
     if comma_int32:
         print("\n=== C as int32 (comma-separated for easy copy) ===")
         for row in res["C_int32"]:
-            print("  ", ", ".join(str(x) for x in row), ", ")
+            print("  ", ", ".join(str(x) for x in row))
 
-# ---------- Matrix multiply with accumulate ----------
+# ---------- Matrix multiply with accumulate (unchanged) ----------
 def quantize_matrix_fp8_e4m3(M):
     bits = [[float_to_fp8_e4m3(x) for x in row] for row in M]
     q = [[to_float32(fp8_e4m3_to_float(b)) for b in row] for row in bits]
@@ -159,12 +184,14 @@ def matmul_fp8_e4m3(A_fp, B_fp, acc_scalar=1.5):
             acc = to_float32(0.0)
             for k in range(K):
                 prod = to_float32(A_q32[i][k] * B_q32[k][j])
-                acc  = to_float32(acc + prod)  # non-fused
+                acc  = to_float32(acc + prod)
             out = to_float32(acc + acc_s32)
             C_f32[i][j] = out
             C_i32[i][j] = float32_to_int32_bits(out)
 
     return {
+        "A_input": A_fp,  # NEW: keep originals for printing
+        "B_input": B_fp,  # NEW
         "A_bits": A_i8, "B_bits": B_i8,
         "A_bits_bin": A_bin, "B_bits_bin": B_bin,
         "A_quant": A_q32, "B_quant": B_q32,
@@ -173,12 +200,25 @@ def matmul_fp8_e4m3(A_fp, B_fp, acc_scalar=1.5):
 
 def pretty_print_result_matmul(res, comma_int32=False, acc_scalar=1.5):
     def fmtf(x: float) -> str: return f"{x:.6g}"
-    print(f"=== MatMul: result = (A@B) + {acc_scalar} (all in float32) ===")
-    print("=== A encoded to FP8 E4M3 (int8) ===")
-    for row in res["A_bits"]: print("  ", row)
-    print("=== B encoded to FP8 E4M3 (int8) ===")
-    for row in res["B_bits"]: print("  ", row)
+    def csv(row): return ", ".join(str(v) for v in row)
 
+    print(f"=== MatMul: result = (A@B) + {acc_scalar} (all in float32) ===")
+
+    # ===== NEW: int8-encoded matrices in comma-separated form =====
+    print("=== A encoded to FP8 E4M3 (int8) — comma-separated ===")
+    for row in res["A_bits"]:
+        print("  ", csv(row), ",")
+
+    print("=== At (A transposed) encoded to FP8 E4M3 (int8) — comma-separated ===")
+    for col in zip(*res["A_bits"]):  # transpose A_bits (int8)
+        print("  ", csv(col), ",")
+
+    print("=== B encoded to FP8 E4M3 (int8) — comma-separated ===")
+    for row in res["B_bits"]:
+        print("  ", csv(row), ",")
+    # ===== end new section =====
+
+    # (keep the rest as-is; these are float views & results)
     print("\n=== A_quant (decoded FP8 -> float32) ===")
     for row in res["A_quant"]: print("  ", [fmtf(x) for x in row])
     print("=== B_quant (decoded FP8 -> float32) ===")
@@ -190,20 +230,22 @@ def pretty_print_result_matmul(res, comma_int32=False, acc_scalar=1.5):
 
     print("\n=== C as int32 raw bit patterns (two's complement) ===")
     for row in res["C_int32"]:
-        print("  ", " ".join(f"{x:>11d}" for x in row))
+        print("  ", ",".join(f"{x:>11d}" for x in row), ",")
 
     if comma_int32:
         print("\n=== C as int32 (comma-separated for easy copy) ===")
         for row in res["C_int32"]:
-            print("  ", ", ".join(str(x) for x in row))
+            print("  ", ", ".join(str(x) for x in row), ",")
 
 # ---------- CLI ----------
 def main():
-    parser = argparse.ArgumentParser(description="FP8 E4M3 outer product and matmul utilities with accumulate: (fp8*fp8)+acc -> fp32.")
+    parser = argparse.ArgumentParser(description="FP8 E4M3 outer product and matmul utilities with accumulate.")
     # Outer product
     parser.add_argument("--a", type=str, default="", help="JSON list of 16 floats for vector a")
     parser.add_argument("--b", type=str, default="", help="JSON list of 16 floats for vector b")
     parser.add_argument("--outer", action="store_true", help="Run outer product with the given --a/--b or example")
+    parser.add_argument("--repeats", type=int, default=2,  # CHANGED: new flag, default 2
+                        help="Repeat the same outer product this many times before adding bias (default 2)")
     # Matrix multiply
     parser.add_argument("--A", type=str, default="", help="JSON 2D list for matrix A (MxK)")
     parser.add_argument("--B", type=str, default="", help="JSON 2D list for matrix B (KxN)")
@@ -227,7 +269,7 @@ def main():
         else:
             a = [ -1.0 + (2.0 * i / 15.0) for i in range(16) ]
             b = [  1.0 - (2.0 * i / 15.0) for i in range(16) ]
-        res = outer_product_fp8_e4m3(a, b, acc_scalar=args.acc)
+        res = outer_product_fp8_e4m3(a, b, acc_scalar=args.acc, repeats=args.repeats)  # CHANGED
         pretty_print_result_outer(res, comma_int32=args.comma_int32, acc_scalar=args.acc)
         ran_any = True
 
@@ -244,10 +286,10 @@ def main():
 
     if not ran_any:
         print("No mode selected; running both examples. Use --outer and/or --matmul to choose.\n")
-        # Outer example
+        # Outer example (defaults to repeats=2 to reflect op(a,b)+op(a,b)+bias)
         a = [ -1.0 + (2.0 * i / 15.0) for i in range(16) ]
         b = [  1.0 - (2.0 * i / 15.0) for i in range(16) ]
-        res = outer_product_fp8_e4m3(a, b, acc_scalar=1.5)
+        res = outer_product_fp8_e4m3(a, b, acc_scalar=1.5, repeats=2)  # CHANGED
         pretty_print_result_outer(res, comma_int32=True, acc_scalar=1.5)
         print("\n" + "="*80 + "\n")
         # Matmul example: 16x16 x 16x16
