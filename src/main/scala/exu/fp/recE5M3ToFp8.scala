@@ -5,15 +5,19 @@ import freechips.rocketchip.tile._
 
 object recE5M3ToFp8 {
 
-	def apply(in: UInt, altfmt: Bool, roundingMode: Bits, saturate: Bool) = {
-		val e5m2Narrower = Module(new hardfloat.RecFNToRecFN(FType.E5M3.exp, FType.E5M3.sig, FType.E5M2.exp, FType.E5M2.sig))
-		e5m2Narrower.io.in := in
+	def apply(in: UInt, unroundedIn: hardfloat.RawFloat, unroundedInvalidExc: Bool, altfmt: Bool, roundingMode: Bits, saturate: Bool) = {
+		val e5m2Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(FType.E5M3.exp, FType.E5M3.sig + 2, FType.E5M2.exp, FType.E5M2.sig, 0))
+		e5m2Narrower.io.in := unroundedIn
 		e5m2Narrower.io.roundingMode := roundingMode
 		e5m2Narrower.io.detectTininess := hardfloat.consts.tininess_afterRounding
+		e5m2Narrower.io.invalidExc := unroundedInvalidExc
+		e5m2Narrower.io.infiniteExc := false.B
+
 		val outBits = Wire(UInt(8.W))
 		val exceptionFlags = Wire(UInt(5.W))
 		outBits := DontCare
 		exceptionFlags := DontCare
+
 		when (altfmt) { // E5M2
 			val e5m2Ieee = e5m2Narrower.io.out
 			val sign = e5m2Ieee(7)
@@ -36,6 +40,7 @@ object recE5M3ToFp8 {
 			outBits := out
 			exceptionFlags := 0.U(5.W)
 		}
+
 		(outBits, exceptionFlags)
 	}
 }

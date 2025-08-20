@@ -128,6 +128,7 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
 
   val s1_op = RegEnable(io.op, io.valid)
   val s1_frm = RegEnable(io.frm, io.valid)
+  val s1_out_altfmt = RegEnable(out_altfmt, io.valid)
 
   io.out := DontCare
   io.exc := DontCare
@@ -152,7 +153,7 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
       fma.io.c := RegEnable(Mux(io.mul, (a(i) ^ b(i)) & (1.U << ftype.ieeeWidth), c(i)), fma_valid)
 
       val (ieeeOut, flags) = if (ftype.ieeeWidth == 9) {
-        recE5M3ToFp8(fma.io.out, out_altfmt_pipe.bits, frm_pipe.bits, false.B)
+        recE5M3ToFp8(fma.io.out, fma.io.unroundedOut, fma.io.unroundedInvalidExc, out_altfmt_pipe.bits, frm_pipe.bits, false.B)
       } else {
         (ftype.ieee(fma.io.out), 0.U(5.W))
       }

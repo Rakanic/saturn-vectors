@@ -10,13 +10,22 @@ size_t vl;
 #define TEST_DATA(type, name) \
 	extern type name ## a[] __attribute__((aligned(64))); \
 	extern type name ## b[] __attribute__((aligned(64))); \
+	extern type name ## c[] __attribute__((aligned(64))); \
 	type *name ## a_; \
-	type *name ## b_;
+	type *name ## b_; \
+	type *name ## c_;
 
 #define TEST_OP(type, name, op) \
 	extern type name ## _ ## op[] __attribute__((aligned(64))); \
 	type *name ## _ ## op ## _; \
 	type name ## _ ## res ## _ ## op ## _;
+
+#define TEST_DATA_OPS(type, wtype, name) \
+	TEST_DATA(type, name) \
+	TEST_OP(wtype, name, mul) \
+	TEST_OP(wtype, name, add) \
+	TEST_OP(wtype, name, sub) \
+	TEST_OP(wtype, name, macc)
 
 /*
 	T - input type
@@ -37,11 +46,13 @@ size_t vl;
 	vl = 0; \
 	name ## a_ = name ## a; /* input A pointer */ \
 	name ## b_ = name ## b; /* input B pointer */ \
+	name ## c_ = name ## c; /* input C pointer */ \
 	name ## _ ## op ## _ = name ## _ ## op; /* result pointer */ \
 	while (avl > 0) { \
 		VSETVLI_ALTFMT(vl, avl, sew, LMUL_M1, alt); /* vsetvli */ \
 		asm volatile(vle " v0, (%0)" : : "r"(name ## a_)); /* load A */ \
 		asm volatile(vle " v8, (%0)" : : "r"(name ## b_)); /* load B */\
+		asm volatile(vle " v24, (%0)" : : "r"(name ## c_)); /* load C */\
 		asm volatile(vfop " v24, v0, v8"); /* operation */ \
 		if (sew != wsew) { \
 			VSETVLI_ALTFMT_X0(avl, wsew, LMUL_M2, walt); /* vsetvli */ \
@@ -51,6 +62,7 @@ size_t vl;
 		asm volatile("vmv.x.s %0, v16" : "=r"(name ## _ ## res ## _ ## op ## _)); /* extract comparison */ \
 		name ## a_ += vl; /* increment input A pointer */ \
 		name ## b_ += vl; /* increment input B pointer */ \
+		name ## c_ += vl; /* increment input C pointer */ \
 		name ## _ ## op ## _ += vl; /* increment result pointer */ \
 		if (name ## _ ## res ## _ ## op ## _) { /* fail if not equal */ \
 			printf("Test failed\n"); \
@@ -68,41 +80,16 @@ size_t vl;
 		avl -= vl; \
 	}
 
-TEST_DATA(uint32_t, fp32)
-TEST_OP(uint32_t, fp32, mul)
-TEST_OP(uint32_t, fp32, add)
+TEST_DATA_OPS(uint32_t, uint32_t, fp32)
+TEST_DATA_OPS(uint16_t, uint16_t, fp16)
+TEST_DATA_OPS(uint16_t, uint16_t, bf16)
+TEST_DATA_OPS(uint8_t, uint8_t, ofp8e5m2)
+TEST_DATA_OPS(uint8_t, uint8_t, ofp8e4m3)
 
-TEST_DATA(uint16_t, fp16)
-TEST_OP(uint16_t, fp16, mul)
-TEST_OP(uint16_t, fp16, add)
-
-TEST_DATA(uint16_t, bf16)
-TEST_OP(uint16_t, bf16, mul)
-TEST_OP(uint16_t, bf16, add)
-
-TEST_DATA(uint8_t, ofp8e5m2)
-TEST_OP(uint8_t, ofp8e5m2, mul)
-TEST_OP(uint8_t, ofp8e5m2, add)
-
-TEST_DATA(uint8_t, ofp8e4m3)
-TEST_OP(uint8_t, ofp8e4m3, mul)
-TEST_OP(uint8_t, ofp8e4m3, add)
-
-TEST_DATA(uint16_t, fp16W)
-TEST_OP(uint32_t, fp16W, mul)
-TEST_OP(uint32_t, fp16W, add)
-
-TEST_DATA(uint16_t, bf16W)
-TEST_OP(uint32_t, bf16W, mul)
-TEST_OP(uint32_t, bf16W, add)
-
-TEST_DATA(uint8_t, ofp8e5m2W)
-TEST_OP(uint16_t, ofp8e5m2W, mul)
-TEST_OP(uint16_t, ofp8e5m2W, add)
-
-TEST_DATA(uint8_t, ofp8e4m3W)
-TEST_OP(uint16_t, ofp8e4m3W, mul)
-TEST_OP(uint16_t, ofp8e4m3W, add)
+TEST_DATA_OPS(uint16_t, uint32_t, fp16W)
+TEST_DATA_OPS(uint16_t, uint32_t, bf16W)
+TEST_DATA_OPS(uint8_t, uint16_t, ofp8e5m2W)
+TEST_DATA_OPS(uint8_t, uint16_t, ofp8e4m3W)
 
 int main() {
 	
@@ -125,6 +112,23 @@ int main() {
 	TEST(fp16W, add, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwadd.vv")
 	TEST(ofp8e5m2W, add, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwadd.vv")
 	TEST(ofp8e4m3W, add, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwadd.vv")
+
+	TEST(fp32, sub, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfsub.vv")
+	TEST(fp16, sub, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfsub.vv")
+	TEST(bf16, sub, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfsub.vv")
+	TEST(ofp8e5m2, sub, SEW_E8, SEW_E8, 1, 1, "vle16.v", "vle16.v", "vfsub.vv")
+	TEST(ofp8e4m3, sub, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfsub.vv")
+	TEST(bf16W, sub, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwsub.vv")
+	TEST(fp16W, sub, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwsub.vv")
+	TEST(ofp8e5m2W, sub, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwsub.vv")
+	TEST(ofp8e4m3W, sub, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwsub.vv")
+
+	TEST(fp32, macc, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfmacc.vv")
+	TEST(fp16, macc, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfmacc.vv")
+	TEST(bf16, macc, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfmacc.vv")
+	TEST(ofp8e5m2, macc, SEW_E8, SEW_E8, 1, 1, "vle16.v", "vle16.v", "vfmacc.vv")
+	TEST(ofp8e4m3, macc, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfmacc.vv")
+	// Widening MACCs are a special case where C needs to be twice as wide as A and B
 
 	printf("All tests passed\n");
 

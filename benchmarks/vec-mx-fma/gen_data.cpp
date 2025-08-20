@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
+#include <functional>
 #include "lo_float.h"
 
 #define COUNT 128
@@ -108,6 +109,21 @@ const char ofp8e5m2Wname[] = "ofp8e5m2W";
 const char ofp8e4m3Wname[] = "ofp8e4m3W";
 
 
+template <class T, class W, auto NAME, size_t WSIZE>
+void operand_test(T vals_a[], T vals_b[], T vals_c[], const char op_name[], std::function<double(double, double, double)> op_func) {
+	std::cout << ".global " << NAME << '_' << op_name << std::endl << ".balign 64" << std::endl << NAME << '_' << op_name << ':' << std::endl;
+	for (size_t i = 0; i < COUNT / (4 / WSIZE); i ++) {
+		std::cout << "    .word 0x";
+		for (int j = 4 / WSIZE - 1; j >= 0; j --) {
+			double out_a = static_cast<double>(vals_a[i * (4 / WSIZE) + j]);
+			double out_b = static_cast<double>(vals_b[i * (4 / WSIZE) + j]);
+			double out_c = static_cast<double>(vals_c[i * (4 / WSIZE) + j]);
+			std::cout << std::hex << std::setfill('0') << std::setw(WSIZE * 2) << (int) static_cast<W>(op_func(out_a, out_b, out_c)).rep();
+		}
+		std::cout << std::endl;
+	}
+}
+
 template <class T, size_t SIZE, auto NAME, double MIN, double MAX, double SUBNORM_MIN, double SUBNORM_MAX, bool WIDEN, class W>
 void test() {
 
@@ -115,6 +131,7 @@ void test() {
 
 	T vals_a[COUNT];
 	T vals_b[COUNT];
+	T vals_c[COUNT];
 
 	std::mt19937 e2;
 	e2.seed(0);
@@ -124,11 +141,13 @@ void test() {
 	for (size_t i = 0; i < SPECIAL_COUNT; i ++) {
 		vals_a[i] = static_cast<T>(subnorm_dist(e2));
 		vals_b[i] = static_cast<T>(subnorm_dist(e2));
+		vals_c[i] = static_cast<T>(subnorm_dist(e2));
 	}
 
 	for (size_t i = SPECIAL_COUNT; i < COUNT; i ++) {
 		vals_a[i] = static_cast<T>(dist(e2));
 		vals_b[i] = static_cast<T>(dist(e2));
+		vals_c[i] = static_cast<T>(dist(e2));
 	}
 
 	vals_a[0] = static_cast<T>(INFINITY);
@@ -166,27 +185,19 @@ void test() {
 		std::cout << std::endl;
 	}
 
-	std::cout << ".global " << NAME << "_mul" << std::endl << ".balign 64" << std::endl << NAME << "_mul:" << std::endl;
-	for (size_t i = 0; i < COUNT / (4 / WSIZE); i ++) {
+	std::cout << ".global " << NAME << "c" << std::endl << ".balign 64" << std::endl << NAME << "c:" << std::endl;
+	for (size_t i = 0; i < COUNT / (4 / SIZE); i ++) {
 		std::cout << "    .word 0x";
-		for (int j = 4 / WSIZE - 1; j >= 0; j --) {
-			W out_a = static_cast<W>(static_cast<double>(vals_a[i * (4 / WSIZE) + j]));
-			W out_b = static_cast<W>(static_cast<double>(vals_b[i * (4 / WSIZE) + j]));
-			std::cout << std::hex << std::setfill('0') << std::setw(WSIZE * 2) << (int) (out_a * out_b).rep();
+		for (int j = 4 / SIZE - 1; j >= 0; j --) {
+			std::cout << std::hex << std::setfill('0') << std::setw(SIZE * 2) << (int) vals_c[i * (4 / SIZE) + j].rep();
 		}
 		std::cout << std::endl;
 	}
 
-	std::cout << ".global " << NAME << "_add" << std::endl << ".balign 64" << std::endl << NAME << "_add:" << std::endl;
-	for (size_t i = 0; i < COUNT / (4 / WSIZE); i ++) {
-		std::cout << "    .word 0x";
-		for (int j = 4 / WSIZE - 1; j >= 0; j --) {
-			W out_a = static_cast<W>(static_cast<double>(vals_a[i * (4 / WSIZE) + j]));
-			W out_b = static_cast<W>(static_cast<double>(vals_b[i * (4 / WSIZE) + j]));
-			std::cout << std::hex << std::setfill('0') << std::setw(WSIZE * 2) << (int) (out_a + out_b).rep();
-		}
-		std::cout << std::endl;
-	}
+	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "add", [](double a, double b, double c) -> double {return a + b;});
+	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "mul", [](double a, double b, double c) -> double {return a * b;});
+	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "sub", [](double a, double b, double c) -> double {return a - b;});
+	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "macc", [](double a, double b, double c) -> double {return a * b + c;});
 }
 
 int main() {
