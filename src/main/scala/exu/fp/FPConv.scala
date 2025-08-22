@@ -13,7 +13,7 @@ import hardfloat._
 case object FPConvFactory extends FunctionalUnitFactory {
   def insns = Seq(
     FCVT_SGL.restrictSEW(1,2,3),
-    FCVT_NRW.restrictSEW(1,2),
+    FCVT_NRW.restrictSEW(0,1,2),
     FCVT_WID.restrictSEW(0,1,2)
   ).flatten.map(_.pipelined(3))
   def generate(implicit p: Parameters) = new FPConvPipe()(p)
@@ -30,7 +30,7 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
     val widen = Input(Bool())
     val narrow = Input(Bool())
     val signed = Input(Bool())
-    val frm = Input(UInt(2.W))
+    val frm = Input(UInt(3.W))
     val i2f = Input(Bool())
     val f2i = Input(Bool())
     val truncating = Input(Bool())
@@ -42,9 +42,6 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
   })
 
   def f2raw(t: FType, in: UInt) = rawFloatFromFN(t.exp, t.sig, in)
-
-  // def fp8e5m2_2raw8(t: FType, in: UInt) = rawFloatFromFN(t.exp, t.sig, in)
-  // def fp8e4m3_2raw16(t: FType, in: UInt) = raw16FromF8e4m3(t.exp, t.sig, in)
 
   def raw2raw(t: FType, in: RawFloat) = {
     val out = WireInit(resizeRawFloat(t.exp, t.sig, in))
@@ -73,13 +70,8 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
   val raw64 = VecInit(Seq(f2raw(FType.D, io.in)))
   val raw32 = VecInit(in32.map(u => f2raw(FType.S, u)))
   val raw16 = VecInit(in16.map(u => f2raw(FType.H, u)))
-  // val raw8e4m3 = VecInit(in8e5m2.map(u => f2raw(FType.E4M3, u)))
-  // val raw8e5m2 = VecInit(in8e5m2.map(u => f2raw(FType.E5M2, u)))
-  // val raw8 = Mux(io.in_altfmt, raw8e5m2, raw8e4m3)
+  val rawBF16 = VecInit(in16.map(u => f2raw(FType.BF16, u)))
   val raw8 = VecInit(in8.map(u => f2raw(FType.E5M3, fp8ToE5M3(u, io.in_altfmt))))
-
-  // val raw8e5m2as16 = VecInit(raw8e5m2.map(r => raw2raw(FType.H, r)))
-  // val f8e4m3as16 = VecInit(in8e4m3.map(r => fp8e4m3_2raw16(FType.H, r)))
 
   val raw32as64 = VecInit(raw32.map(r => raw2raw(FType.D, r)))
   val raw8as64 = VecInit(raw8.map(r => raw2raw(FType.D, r)))
@@ -102,6 +94,7 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
   h2i(1).io.in := RegEnable(raw2rec(FType.H, raw16(3)), io.valid)
 
   val s1_out_eew = RegEnable(s0_out_eew, io.valid)
+  val s1_altfmt = RegEnable(io.in_altfmt, io.valid)
   val s1_signed = RegEnable(io.signed, io.valid)
   val s1_frm = RegEnable(io.frm, io.valid)
   val s1_truncating = RegEnable(io.truncating, io.valid)
@@ -152,28 +145,51 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
     i2f.io.detectTininess := hardfloat.consts.tininess_afterRounding
   }
 
-  val q2h = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.E5M3.exp, FType.E5M3.sig, FType.H.exp, FType.H.sig)))
+  val fp82bf16 = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.E5M3.exp, FType.E5M3.sig, FType.BF16.exp, FType.BF16.sig)))
+  val bf162s = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.BF16.exp, FType.BF16.sig, FType.S.exp, FType.S.sig)))
   val h2s = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.H.exp, FType.H.sig, FType.S.exp, FType.S.sig)))
   val s2d = Seq.fill(1)(Module(new hardfloat.RecFNToRecFN(FType.S.exp, FType.S.sig, FType.D.exp, FType.D.sig)))
+
+  val bf162e5m3 = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.BF16.exp, FType.BF16.sig, FType.E5M3.exp, FType.E5M3.sig)))
+  val bf162e4m3 = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.BF16.exp, FType.BF16.sig, FType.E4M3.exp, FType.E4M3.sig)))
+  val bf162e5m2 = Seq.fill(4)(Module(new hardfloat.RecFNToRecFN(FType.BF16.exp, FType.BF16.sig, FType.E5M2.exp, FType.E5M2.sig)))
+  val s2bf16 = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.S.exp, FType.S.sig, FType.BF16.exp, FType.BF16.sig)))
   val s2h = Seq.fill(2)(Module(new hardfloat.RecFNToRecFN(FType.S.exp, FType.S.sig, FType.H.exp, FType.H.sig)))
   val d2s = Seq.fill(1)(Module(new hardfloat.RecFNToRecFN(FType.D.exp, FType.D.sig, FType.S.exp, FType.S.sig)))
 
-  q2h(0).io.in := RegEnable(raw2rec(FType.E5M3, raw8(0)), io.valid)
-  q2h(1).io.in := RegEnable(raw2rec(FType.E5M3, raw8(2)), io.valid)
-  q2h(2).io.in := RegEnable(raw2rec(FType.E5M3, raw8(4)), io.valid)
-  q2h(3).io.in := RegEnable(raw2rec(FType.E5M3, raw8(6)), io.valid)
+  fp82bf16(0).io.in := RegEnable(raw2rec(FType.E5M3, raw8(0)), io.valid)
+  fp82bf16(1).io.in := RegEnable(raw2rec(FType.E5M3, raw8(2)), io.valid)
+  fp82bf16(2).io.in := RegEnable(raw2rec(FType.E5M3, raw8(4)), io.valid)
+  fp82bf16(3).io.in := RegEnable(raw2rec(FType.E5M3, raw8(6)), io.valid)
+  bf162s(0).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(0)), io.valid)
+  bf162s(1).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(2)), io.valid)
   h2s(0).io.in := RegEnable(raw2rec(FType.H, raw16(0)), io.valid)
   h2s(1).io.in := RegEnable(raw2rec(FType.H, raw16(2)), io.valid)
   s2d(0).io.in := RegEnable(raw2rec(FType.S, raw32(0)), io.valid)
+
+  bf162e5m3(0).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(0)), io.valid)
+  bf162e5m3(1).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(1)), io.valid)
+  bf162e5m3(2).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(2)), io.valid)
+  bf162e5m3(3).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(3)), io.valid)
+  bf162e4m3(0).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(0)), io.valid)
+  bf162e4m3(1).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(1)), io.valid)
+  bf162e4m3(2).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(2)), io.valid)
+  bf162e4m3(3).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(3)), io.valid)
+  bf162e5m2(0).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(0)), io.valid)
+  bf162e5m2(1).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(1)), io.valid)
+  bf162e5m2(2).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(2)), io.valid)
+  bf162e5m2(3).io.in := RegEnable(raw2rec(FType.BF16, rawBF16(3)), io.valid)
+  s2bf16(0).io.in := RegEnable(raw2rec(FType.S, raw32(0)), io.valid)
+  s2bf16(1).io.in := RegEnable(raw2rec(FType.S, raw32(1)), io.valid)
   s2h(0).io.in := RegEnable(raw2rec(FType.S, raw32(0)), io.valid)
   s2h(1).io.in := RegEnable(raw2rec(FType.S, raw32(1)), io.valid)
   d2s(0).io.in := RegEnable(raw2rec(FType.D, raw64(0)), io.valid)
 
-  (q2h ++ h2s ++ s2d ++ s2h ++ d2s).foreach { f2f =>
+  (fp82bf16 ++ bf162s ++ h2s ++ s2d ++ bf162e5m3 ++ bf162e4m3 ++ bf162e5m2 ++ s2bf16 ++ s2h ++ d2s).foreach { f2f =>
     f2f.io.roundingMode := s1_frm
     f2f.io.detectTininess := hardfloat.consts.tininess_afterRounding
   }
-  (s2h ++ d2s).foreach { f2f =>
+  (bf162e5m3 ++ bf162e4m3 ++ bf162e5m2 ++ s2bf16 ++ s2h ++ d2s).foreach { f2f =>
     f2f.io.roundingMode := Mux(s1_rto, "b110".U, s1_frm)
   }
 
@@ -199,22 +215,34 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
   val s2i_exc = s2i.map(f => RegEnable(toExc(f.io.intExceptionFlags), s1_valid))
   val h2i_exc = h2i.map(f => RegEnable(toExc(f.io.intExceptionFlags), s1_valid))
 
-  val s2d_out = s2d.map(f => RegEnable(FType.D.ieee(f.io.out), s1_valid))
-  val q2h_out = q2h.map(f => RegEnable(FType.H.ieee(f.io.out), s1_valid))
+  val fp82bf16_out = fp82bf16.map(f => RegEnable(FType.BF16.ieee(f.io.out), s1_valid))
+  val bf162s_out = bf162s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
   val h2s_out = h2s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
-  val d2s_out = d2s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
+  val s2d_out = s2d.map(f => RegEnable(FType.D.ieee(f.io.out), s1_valid))
+
+  val bf162e5m2_out = bf162e5m2.map(f => RegEnable(saturateE5M2(FType.E5M2.ieee(f.io.out), false.B), s1_valid)) // TODO: Saturate
+  val bf162e4m3_out = bf162e5m3.zip(bf162e4m3).map(f => RegEnable(assembleOFPE4M3(FType.E5M3.ieee(f._1.io.out), FType.E4M3.ieee(f._2.io.out), false.B), s1_valid)) // TODO: Saturate
+  val s2bf16_out = s2bf16.map(f => RegEnable(FType.BF16.ieee(f.io.out), s1_valid))
   val s2h_out = s2h.map(f => RegEnable(FType.H.ieee(f.io.out), s1_valid))
-  val s2d_exc = s2d.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
+  val d2s_out = d2s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
+
+  val fp82bf16_exc = fp82bf16.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
+  val bf162s_exc = bf162s.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
   val h2s_exc = h2s.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
-  val q2h_exc = q2h.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
-  val d2s_exc = d2s.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
+  val s2d_exc = s2d.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
+
+  val bf162e5m2_exc = bf162e5m2.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
+  val bf162e4m3_exc = bf162e5m3.zip(bf162e4m3).map(f => RegEnable(f._1.io.exceptionFlags | f._2.io.exceptionFlags, s1_valid))
+  val s2bf16_exc = s2bf16.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
   val s2h_exc = s2h.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
+  val d2s_exc = d2s.map(f => RegEnable(f.io.exceptionFlags, s1_valid))
 
   val s2_i2f = RegEnable(s1_i2f, s1_valid)
   val s2_f2i = RegEnable(s1_f2i, s1_valid)
   val s2_widen = RegEnable(s1_widen, s1_valid)
   val s2_narrow = RegEnable(s1_narrow, s1_valid)
   val s2_out_eew = RegEnable(s1_out_eew, s1_valid)
+  val s2_altfmt = RegEnable(s1_altfmt, s1_valid)
 
   when (s2_i2f) {
     when (s2_out_eew === 3.U) {
@@ -247,21 +275,26 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
       out := s2d_out(0)
       exc := VecInit.fill(8)(s2d_exc(0))
     }
-    when (s2_widen && s2_out_eew === 1.U) {
-      out := VecInit(q2h_out).asUInt
-      for (i <- 0 until 8) { exc(i) := q2h_exc(i/2) } // NO idea
-    }
     when (s2_widen && s2_out_eew === 2.U) {
-      out := VecInit(h2s_out).asUInt
-      for (i <- 0 until 8) { exc(i) := h2s_exc(i/4) }
+      out := Mux(s2_altfmt, VecInit(bf162s_out).asUInt, VecInit(h2s_out).asUInt)
+      for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162s_exc(i/4), h2s_exc(i/4)) }
     }
+    when (s2_widen && s2_out_eew === 1.U) {
+      out := VecInit(fp82bf16_out).asUInt
+      for (i <- 0 until 8) { exc(i) := fp82bf16_exc(i/2) }
+    }
+    
     when (s2_narrow && s2_out_eew === 2.U) {
       out := d2s_out(0)
       exc := VecInit.fill(8)(d2s_exc(0))
     }
     when (!s2_widen && s2_out_eew === 1.U) {
-      out := VecInit(s2h_out.map(o => 0.U(16.W) ## o)).asUInt
-      for (i <- 0 until 8) { exc(i) := s2h_exc(i/4) }
+      out := VecInit(s2h_out.zip(s2bf16_out).map(o => 0.U(16.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
+      for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, s2bf16_exc(i/4), s2h_exc(i/4)) }
+    }
+    when (!s2_widen && s2_out_eew === 0.U) {
+      out := VecInit(bf162e4m3_out.zip(bf162e5m2_out).map(o => 0.U(8.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
+      for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162e5m2_exc(i/2), bf162e4m3_exc(i/2)) }
     }
   }
 }

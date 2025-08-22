@@ -5,109 +5,24 @@
 #include <cstdlib>
 #include <iomanip>
 #include <functional>
-#include "lo_float.h"
+#include <bitset>
+#include "fp_types.hpp"
 
 #define COUNT 128
 #define SPECIAL_COUNT 20
-
-template <int exp, int sig>
-struct Std_InfChecker {
-	bool operator()(uint32_t bits) const {
-		return (bits & ((1 << (exp + sig)) - 1)) == ((1 << exp) - 1) << sig;
-	}
-	
-	uint32_t minNegInf() const {
-		return ((1 << (exp + 1)) - 1) << sig;
-	}
-
-	uint32_t minPosInf() const {
-		return ((1 << exp) - 1) << sig;
-	}
-};
-
-template <int exp, int sig>
-struct Std_NaNChecker {
-	bool operator()(uint32_t bits) const {
-		return (bits & ((1 << exp) - 1) << sig) == ((1 << exp) - 1) << sig && (bits & ((1 << sig) - 1)) != 0;
-	}
-	
-	uint32_t qNanBitPattern() const {
-		return ((1 << (exp + 1)) - 1) << (sig - 1);
-	}
-
-	uint32_t sNanBitPattern() const {
-		return ((1 << (exp + 1)) - 1) << (sig - 1);
-	}
-};
-
-template <int exp, int sig>
-struct FN_InfChecker {
-	bool operator()(uint32_t bits) const {
-		return false;
-	}
-	
-	uint32_t minNegInf() const {
-		return (1 << (exp + sig)) - 1;
-	}
-
-	uint32_t minPosInf() const {
-		return (1 << (exp + sig)) - 1;
-	}
-};
-
-template <int exp, int sig>
-struct FN_NaNChecker {
-	bool operator()(uint32_t bits) const {
-		return (bits & ((1 << (exp + sig)) - 1)) == (1 << (exp + sig)) - 1;
-	}
-	
-	uint32_t qNanBitPattern() const {
-		return (1 << (exp + sig)) - 1;
-	}
-
-	uint32_t sNanBitPattern() const {
-		return (1 << (exp + sig)) - 1;
-	}
-};
-
-template <int exp, int sig>
-constexpr lo_float::FloatingPointParams param_std(
-	exp + sig + 1, // Total bitwidth
-	sig, // Mantissa
-	(1 << (exp - 1)) - 1, // Bias
-	lo_float::Rounding_Mode::RoundToNearestEven,
-	lo_float::Inf_Behaviors::Extended,
-	lo_float::NaN_Behaviors::QuietNaN,
-	lo_float::Signedness::Signed,
-	Std_InfChecker<exp, sig>(),
-	Std_NaNChecker<exp, sig>(),
-	1 // stoch_len
-);
-
-template <int exp, int sig>
-constexpr lo_float::FloatingPointParams param_fn(
-	exp + sig + 1, // Total bitwidth
-	sig, // Mantissa
-	(1 << (exp - 1)) - 1, // Bias
-	lo_float::Rounding_Mode::RoundToNearestEven,
-	lo_float::Inf_Behaviors::Extended,
-	lo_float::NaN_Behaviors::QuietNaN,
-	lo_float::Signedness::Signed,
-	FN_InfChecker<exp, sig>(),
-	FN_NaNChecker<exp, sig>(),
-	1 // stoch_len
-);
 
 const char fp32name[] = "fp32";
 const char fp16name[] = "fp16";
 const char bf16name[] = "bf16";
 const char ofp8e5m2name[] = "ofp8e5m2";
 const char ofp8e4m3name[] = "ofp8e4m3";
+
 const char fp16Wname[] = "fp16W";
 const char bf16Wname[] = "bf16W";
 const char ofp8e5m2Wname[] = "ofp8e5m2W";
 const char ofp8e4m3Wname[] = "ofp8e4m3W";
 
+std::mt19937 e2;
 
 template <class T, class W, auto NAME, size_t WSIZE>
 void operand_test(T vals_a[], T vals_b[], T vals_c[], const char op_name[], std::function<double(double, double, double)> op_func) {
@@ -133,8 +48,6 @@ void test() {
 	T vals_b[COUNT];
 	T vals_c[COUNT];
 
-	std::mt19937 e2;
-	e2.seed(0);
 	std::uniform_real_distribution<> dist(MIN, MAX);
 	std::uniform_real_distribution<> subnorm_dist(SUBNORM_MIN, SUBNORM_MAX);
 
@@ -198,6 +111,7 @@ void test() {
 	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "mul", [](double a, double b, double c) -> double {return a * b;});
 	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "sub", [](double a, double b, double c) -> double {return a - b;});
 	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "macc", [](double a, double b, double c) -> double {return a * b + c;});
+	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "ident", [](double a, double b, double c) -> double {return a;});
 }
 
 int main() {
@@ -207,6 +121,8 @@ int main() {
 	using bf16 = lo_float::Templated_Float<param_std<8, 7>>;
 	using ofp8e5m2 = lo_float::Templated_Float<param_std<5, 2>>;
 	using ofp8e4m3 = lo_float::Templated_Float<param_fn<4, 3>>;
+
+	e2.seed(0);
 
 	std::cout << ".section .data,\"aw\",@progbits" << std::endl;
 
@@ -221,6 +137,7 @@ int main() {
 	test<bf16, 2, bf16name, -1e15, 1e15, -2e-38, 2e-38, false, bf16>();
 	test<ofp8e5m2, 1, ofp8e5m2name, -1e2, 1e2, -1e-4, 1e-4, false, ofp8e5m2>();
 	test<ofp8e4m3, 1, ofp8e4m3name, -3e1, 3e1, -1e-1, 1e-1, false, ofp8e4m3>();
+
 	test<fp16, 2, fp16Wname, -1e2, 1e2, -1e-6, 1e-6, true, fp32>();
 	test<bf16, 2, bf16Wname, -1e15, 1e15, -2e-38, 2e-38, true, fp32>();
 	test<ofp8e5m2, 1, ofp8e5m2Wname, -1e2, 1e2, -1e-4, 1e-4, true, bf16>();

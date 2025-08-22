@@ -1,6 +1,7 @@
 package saturn.exu
 
 import chisel3._
+import chisel3.util._
 
 object fp8ToE5M3 {
 
@@ -13,8 +14,21 @@ object fp8ToE5M3 {
 			val sig = in(2, 0)
 			val isNaN = exp.andR && sig.andR
 			val isSubnormal = !exp.orR
-			val adjustedExp = (isNaN.asUInt ## exp) + Mux(isNaN || isSubnormal, 0.U, 8.U)
-			sign ## adjustedExp ## sig
+			val subnormShift = PriorityEncoder(Reverse(sig))
+			val subnormSig = ((sig << 1.U) << subnormShift)(2, 0)
+			val subnormExp = 8.U(5.W) - subnormShift
+			val outE5M3 = Mux(isNaN,
+				sign ## "b11111100".U(8.W), // NaN
+				Mux(isSubnormal,
+					Mux(sig.orR,
+						sign ## subnormExp ## subnormSig, // Subnormal
+						sign ## "b00000000".U(8.W) // Zero
+					),
+					sign ## ((0.U(1.W) ## exp) + 8.U) ## sig // Normal
+				)
+			)
+			dontTouch(outE5M3)
+			outE5M3
 		})
 	}
 }
