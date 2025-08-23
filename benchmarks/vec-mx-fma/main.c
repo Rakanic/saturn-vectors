@@ -58,7 +58,7 @@ size_t vl;
 		asm volatile(vle " v8, (%0)" : : "r"(name ## b_)); /* load B */\
 		asm volatile(vle " v24, (%0)" : : "r"(name ## c_)); /* load C */\
 		asm volatile(vfop " v24, v0" IF ## use_vs2(", v8", "")); /* operation */ \
-		if (sew != wsew) { \
+		if (1/*sew != wsew*/) { \
 			VSETVLI_ALTFMT_X0(vl, wsew, LMUL_M2, walt); /* vsetvli */ \
 		} \
 		asm volatile(wvle " v8, (%0)" : : "r"(name ## _ ## op ## _)); /* load result */ \

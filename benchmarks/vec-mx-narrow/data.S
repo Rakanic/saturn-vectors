@@ -471,7 +471,7 @@ ofp8e5m2:
 .balign 64
 ofp8e5m2_out:
     .word 0x7efc7e7c
-    .word 0xd64a0000
+    .word 0xd64a8000
     .word 0xd4515654
     .word 0x4d534c41
     .word 0xbe55c8d3
@@ -573,7 +573,7 @@ ofp8e4m3:
 .balign 64
 ofp8e4m3_out:
     .word 0x7fff7f7f
-    .word 0xc55d0000
+    .word 0xc55d8000
     .word 0xdbd45756
     .word 0x5a3fcdc6
     .word 0xdc4d5341

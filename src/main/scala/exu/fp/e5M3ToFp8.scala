@@ -3,24 +3,24 @@ package saturn.exu
 import chisel3._
 import freechips.rocketchip.tile._
 
-object rawE5M5ToFp8 {
+object rawUnroundedToFp8 {
 
-	def apply(unroundedIn: hardfloat.RawFloat, unroundedInvalidExc: Bool, altfmt: Bool, roundingMode: Bits, saturate: Bool) = {
-		val e5m2Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(FType.E5M3.exp, FType.E5M3.sig + 2, FType.E5M2.exp, FType.E5M2.sig, 0))
+	def apply(unroundedType: FType, unroundedIn: hardfloat.RawFloat, unroundedInvalidExc: Bool, altfmt: Bool, roundingMode: Bits, saturate: Bool) = {
+		val e5m2Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(unroundedType.exp, unroundedType.sig + 2, FType.E5M2.exp, FType.E5M2.sig, 0))
 		e5m2Narrower.io.in := unroundedIn
 		e5m2Narrower.io.roundingMode := roundingMode
 		e5m2Narrower.io.detectTininess := hardfloat.consts.tininess_afterRounding
 		e5m2Narrower.io.invalidExc := unroundedInvalidExc
 		e5m2Narrower.io.infiniteExc := false.B
 
-		val e5m3Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(FType.E5M3.exp, FType.E5M3.sig + 2, FType.E5M3.exp, FType.E5M3.sig, 0))
+		val e5m3Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(unroundedType.exp, unroundedType.sig + 2, FType.E5M3.exp, FType.E5M3.sig, 0))
 		e5m3Narrower.io.in := unroundedIn
 		e5m3Narrower.io.roundingMode := roundingMode
 		e5m3Narrower.io.detectTininess := hardfloat.consts.tininess_afterRounding
 		e5m3Narrower.io.invalidExc := unroundedInvalidExc
 		e5m3Narrower.io.infiniteExc := false.B
 
-		val e4m3Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(FType.E5M3.exp, FType.E5M3.sig + 2, FType.E4M3.exp, FType.E5M3.sig, 0))
+		val e4m3Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(unroundedType.exp, unroundedType.sig + 2, FType.E4M3.exp, FType.E5M3.sig, 0))
 		e4m3Narrower.io.in := unroundedIn
 		e4m3Narrower.io.roundingMode := roundingMode
 		e4m3Narrower.io.detectTininess := hardfloat.consts.tininess_afterRounding
@@ -59,10 +59,7 @@ object saturateE5M2 {
 object assembleOFPE4M3 {
 	
 	def apply(ieeeE5M3: UInt, ieeeE4M3: UInt, saturate: Bool) = {
-		dontTouch(ieeeE5M3)
-		dontTouch(ieeeE4M3)
 		val sign = ieeeE4M3(7)
-		dontTouch(sign)
 		val expE4M3 = ieeeE4M3(6, 3)
 		val sigE4M3 = ieeeE4M3(2, 0)
 		val expE5M3 = ieeeE5M3(7, 3)
@@ -79,7 +76,6 @@ object assembleOFPE4M3 {
 			),
 			ieeeE4M3
 		)
-		dontTouch(outValue)
 		outValue
 	}
 }

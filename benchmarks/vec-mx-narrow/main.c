@@ -43,6 +43,7 @@ size_t vl;
 		if (name ## _neq != -1) { /* fail if not equal */ \
 			printf("Test failed\n"); \
 			printf("Index: %d\n", avl); \
+			printf("%d\n", name ## _neq); \
 			for (size_t i = 0; i < vl; i ++) { \
 				asm volatile("vmv.x.s %0, v24" : "=r"(name ## _res)); \
 				printf("%#010x\n", name ## _res); \

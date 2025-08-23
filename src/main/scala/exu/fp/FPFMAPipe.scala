@@ -22,6 +22,7 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
     val b_eew = Input(UInt(2.W))
     val c_eew = Input(UInt(2.W))
     val out_eew = Input(UInt(2.W))
+    val widen = Input(Bool())
     val altfmt = Input(Bool())
     val a = Input(UInt(64.W))
     val b = Input(UInt(64.W))
@@ -32,9 +33,13 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   })
 
   val out_eew_pipe = Pipe(io.valid, io.out_eew, depth-1)
-  val out_altfmt = Mux(io.out_eew === io.a_eew, io.altfmt, io.a_eew === 0.U || io.b_eew === 0.U)
+  val out_altfmt = Mux(io.widen, io.out_eew === 1.U, io.altfmt)
   val out_altfmt_pipe = Pipe(io.valid, out_altfmt, depth-1)
   val frm_pipe = Pipe(io.valid, io.frm, depth-1)
+
+  val a_altfmt = Mux(io.out_eew === io.a_eew, out_altfmt, io.altfmt)
+  val b_altfmt = Mux(io.out_eew === io.b_eew, out_altfmt, io.altfmt)
+  val c_altfmt = Mux(io.out_eew === io.c_eew, out_altfmt, io.altfmt)
 
   val da = io.a.asTypeOf(Vec(1, UInt(64.W))).map(f => FType.D.recode(f))
   val db = io.b.asTypeOf(Vec(1, UInt(64.W))).map(f => FType.D.recode(f))
@@ -61,70 +66,11 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
     widen.io.out
   }
 
-  val f8_widen = io.out_eew === 1.U && (io.a_eew === 0.U || io.b_eew === 0.U)
-
   val dfma_valid = io.valid && io.out_eew === 3.U
   val sfma_valid = io.valid && io.out_eew === 2.U
   val hfma_valid = io.valid && io.out_eew === 1.U && !out_altfmt
   val bf16fma_valid = io.valid && io.out_eew === 1.U && out_altfmt
-  val f8_valid = io.valid && io.out_eew === 0.U
-
-  val swa = Seq(widen(sa(0), FType.S, FType.D, io.out_eew === 3.U && io.a_eew === 2.U))
-  val swb = Seq(widen(sb(0), FType.S, FType.D, io.out_eew === 3.U && io.b_eew === 2.U))
-  val swc = Seq(widen(sc(0), FType.S, FType.D, io.out_eew === 3.U && io.c_eew === 2.U))
-  val hwa = Seq(
-    widen(ha(0), FType.H, FType.S, io.out_eew === 2.U && io.a_eew === 1.U && !io.altfmt),
-    widen(ha(2), FType.H, FType.S, io.out_eew === 2.U && io.a_eew === 1.U && !io.altfmt))
-  val hwb = Seq(
-    widen(hb(0), FType.H, FType.S, io.out_eew === 2.U && io.b_eew === 1.U && !io.altfmt),
-    widen(hb(2), FType.H, FType.S, io.out_eew === 2.U && io.b_eew === 1.U && !io.altfmt))
-  val hwc = Seq(
-    widen(hc(0), FType.H, FType.S, io.out_eew === 2.U && io.c_eew === 1.U && !io.altfmt),
-    widen(hc(2), FType.H, FType.S, io.out_eew === 2.U && io.c_eew === 1.U && !io.altfmt))
-  val bf16wa = Seq(
-    widen(bf16a(0), FType.BF16, FType.S, io.out_eew === 2.U && io.a_eew === 1.U && io.altfmt),
-    widen(bf16a(2), FType.BF16, FType.S, io.out_eew === 2.U && io.a_eew === 1.U && io.altfmt))
-  val bf16wb = Seq(
-    widen(bf16b(0), FType.BF16, FType.S, io.out_eew === 2.U && io.b_eew === 1.U && io.altfmt),
-    widen(bf16b(2), FType.BF16, FType.S, io.out_eew === 2.U && io.b_eew === 1.U && io.altfmt))
-  val bf16wc = Seq(
-    widen(bf16c(0), FType.BF16, FType.S, io.out_eew === 2.U && io.c_eew === 1.U && io.altfmt),
-    widen(bf16c(2), FType.BF16, FType.S, io.out_eew === 2.U && io.c_eew === 1.U && io.altfmt))
-  val f8wa = Seq(
-    widen(f8a(0), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U),
-    widen(f8a(2), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U),
-    widen(f8a(4), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U),
-    widen(f8a(6), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.a_eew === 0.U))
-  val f8wb = Seq(
-    widen(f8b(0), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U),
-    widen(f8b(2), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U),
-    widen(f8b(4), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U),
-    widen(f8b(6), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.b_eew === 0.U))
-  val f8wc = Seq(
-    widen(f8c(0), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U),
-    widen(f8c(2), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U),
-    widen(f8c(4), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U),
-    widen(f8c(6), FType.E5M3, FType.BF16, io.out_eew === 1.U && io.c_eew === 0.U))
-
-  val da_in = da.zip(swa).map(t => Mux(io.out_eew =/= io.a_eew, t._2, t._1))
-  val db_in = db.zip(swb).map(t => Mux(io.out_eew =/= io.b_eew, t._2, t._1))
-  val dc_in = dc.zip(swc).map(t => Mux(io.out_eew =/= io.c_eew, t._2, t._1))
-
-  val sa_in = sa.zip(hwa.zip(bf16wa)).map(t => Mux(io.out_eew =/= io.a_eew, Mux(io.altfmt, t._2._2, t._2._1), t._1))
-  val sb_in = sb.zip(hwb.zip(bf16wb)).map(t => Mux(io.out_eew =/= io.b_eew, Mux(io.altfmt, t._2._2, t._2._1), t._1))
-  val sc_in = sc.zip(hwc.zip(bf16wc)).map(t => Mux(io.out_eew =/= io.c_eew, Mux(io.altfmt, t._2._2, t._2._1), t._1))
-
-  val ha_in = ha
-  val hb_in = hb
-  val hc_in = hc
-
-  val bf16a_in = bf16a.zip(f8wa).map(t => Mux(io.out_eew =/= io.a_eew, t._2, t._1))
-  val bf16b_in = bf16b.zip(f8wb).map(t => Mux(io.out_eew =/= io.b_eew, t._2, t._1))
-  val bf16c_in = bf16c.zip(f8wc).map(t => Mux(io.out_eew =/= io.c_eew, t._2, t._1))
-
-  val f8a_in = f8a
-  val f8b_in = f8b
-  val f8c_in = f8c
+  val f8fma_valid = io.valid && io.out_eew === 0.U
 
   val s1_op = RegEnable(io.op, io.valid)
   val s1_frm = RegEnable(io.frm, io.valid)
@@ -133,40 +79,179 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   io.out := DontCare
   io.exc := DontCare
 
-  (buildFP64.option((dfma_valid, FType.D, da_in, db_in, dc_in, true.B)) ++ Seq(
-    (sfma_valid, FType.S, sa_in, sb_in, sc_in, true.B),
-    (hfma_valid, FType.H, ha_in, hb_in, hc_in, !out_altfmt_pipe.bits),
-    (bf16fma_valid, FType.BF16, bf16a_in, bf16b_in, bf16c_in, out_altfmt_pipe.bits),
-    (f8_valid, FType.E5M3, f8a_in, f8b_in, f8c_in, true.B),
-  )).foreach { case (fma_valid, ftype, a, b, c, ftype_cond) => {
-    val recodedWidth = if (ftype.ieeeWidth == 9) 8 else ftype.ieeeWidth
-    val n = 64 / recodedWidth
-    val s1_valid = RegNext(fma_valid, false.B)
-    val res = (0 until n).map { i =>
-      val fma = Module(new MulAddRecFNPipe(depth-2, ftype.exp, ftype.sig))
-      fma.io.validin      := s1_valid
-      fma.io.op           := Mux(s1_valid, s1_op, 0.U)
-      fma.io.roundingMode := Mux(s1_valid, s1_frm, 0.U)
-      fma.io.detectTininess := hardfloat.consts.tininess_afterRounding
-      fma.io.a := RegEnable(a(i), fma_valid)
-      fma.io.b := RegEnable(Mux(io.addsub, 1.U << (ftype.ieeeWidth - 1), b(i)), fma_valid)
-      fma.io.c := RegEnable(Mux(io.mul, (a(i) ^ b(i)) & (1.U << ftype.ieeeWidth), c(i)), fma_valid)
+  val valid_signals = Map(
+    FType.D -> dfma_valid,
+    FType.S -> sfma_valid,
+    FType.H -> hfma_valid,
+    FType.BF16 -> bf16fma_valid,
+    FType.E5M3 -> f8fma_valid
+  )
 
-      val (ieeeOut, flags) = if (ftype.ieeeWidth == 9) {
-        rawE5M5ToFp8(fma.io.unroundedOut, fma.io.unroundedInvalidExc, out_altfmt_pipe.bits, frm_pipe.bits, false.B)
+  val recoded_in = Map(
+    FType.D -> (da, db, dc),
+    FType.S -> (sa, sb, sc),
+    FType.H -> (ha, hb, hc),
+    FType.BF16 -> (bf16a, bf16b, bf16c),
+    FType.E5M3 -> (f8a, f8b, f8c)
+  )
+
+  val ftype_conditions = Map(
+    FType.D -> (3.U, false.B, false.B),
+    FType.S -> (2.U, false.B, false.B),
+    FType.H -> (1.U, false.B, false.B),
+    FType.BF16 -> (1.U, false.B, true.B),
+    FType.E5M3 -> (0.U, true.B, false.B)
+  )
+
+  val ftype_used_for = Map(
+    FType.D -> Seq(FType.D, FType.S, FType.H, FType.BF16, FType.E5M3),
+    FType.S -> Seq(FType.S, FType.H, FType.BF16, FType.E5M3),
+    FType.H -> Seq(FType.H, FType.E5M3),
+    FType.BF16 -> Seq(FType.BF16, FType.E5M3),
+    FType.E5M3 -> Seq(FType.E5M3)
+  )
+
+  val fma_params = Seq( // Larger ones need to be spaced out correctly to easily select the right indeces when widening
+    if (buildFP64) FType.D else FType.S,
+    FType.H,
+    FType.BF16,
+    FType.E5M3,
+    FType.S,
+    FType.H,
+    FType.BF16,
+    FType.E5M3
+  )
+
+  val ftype_exc_lanes = Map(
+    FType.D -> 8,
+    FType.S -> 4,
+    FType.H -> 2,
+    FType.BF16 -> 2,
+    FType.E5M3 -> 1,
+  )
+
+  val out = Map(
+    FType.D -> Wire(Vec(1, UInt(64.W))),
+    FType.S -> Wire(Vec(2, UInt(32.W))),
+    FType.H -> Wire(Vec(4, UInt(16.W))),
+    FType.BF16 -> Wire(Vec(4, UInt(16.W))),
+    FType.E5M3 -> Wire(Vec(8, UInt(8.W)))
+  )
+
+  val exc = Map(
+    FType.D -> Wire(Vec(8, UInt(5.W))),
+    FType.S -> Wire(Vec(8, UInt(5.W))),
+    FType.H -> Wire(Vec(8, UInt(5.W))),
+    FType.BF16 -> Wire(Vec(8, UInt(5.W))),
+    FType.E5M3 -> Wire(Vec(8, UInt(5.W)))
+  )
+
+  out.foreach{ case (key, value) => value := DontCare }
+  exc.foreach{ case (key, value) => value := DontCare }
+
+  val out_select = ftype_conditions.map { case (key, cond) =>
+    key -> (out_eew_pipe.bits === cond._1 && (cond._2 || out_altfmt_pipe.bits === cond._3))
+  }
+
+  fma_params.foldLeft(Map(
+    FType.D -> 0, FType.S -> 0, FType.H -> 0, FType.BF16 -> 0, FType.E5M3 -> 0
+  )) { (counts, fma_type) => {
+    val usedFor = ftype_used_for(fma_type)
+    val fma_valid = usedFor.map(valid_signals(_)).foldLeft(0.U)(_|_).asBool
+    val s1_valid = RegNext(fma_valid, false.B)
+    val fma = Module(new MulAddRecFNPipe(depth-2, fma_type.exp, fma_type.sig))
+    fma.io.validin      := s1_valid
+    fma.io.op           := Mux(s1_valid, s1_op, 0.U)
+    fma.io.roundingMode := Mux(s1_valid, s1_frm, 0.U)
+    fma.io.detectTininess := hardfloat.consts.tininess_afterRounding
+
+    val a = Wire(UInt(fma_type.recodedWidth.W))
+    val b = Wire(UInt(fma_type.recodedWidth.W))
+    val c = Wire(UInt(fma_type.recodedWidth.W))
+
+    a := DontCare
+    b := DontCare
+    c := DontCare
+
+    usedFor.foreach { data_type =>
+      val cond = ftype_conditions(data_type)
+      val index = counts(data_type)
+
+      val select_a = io.a_eew === cond._1 && (cond._2 || a_altfmt === cond._3)
+      val in_a = recoded_in(data_type)._1(index)
+      val wide_a = if (data_type != fma_type) {
+        widen(in_a, data_type, fma_type, select_a)
       } else {
-        (ftype.ieee(fma.io.out), 0.U(5.W))
+        in_a
+      }
+      when (select_a) {
+        a := wide_a
       }
 
-      val out = Pipe(fma.io.validout, ieeeOut, depth-4).bits
-      val exc = Pipe(fma.io.validout, flags | fma.io.exceptionFlags, depth-4).bits
-      (out, Seq.fill(recodedWidth / 8)(exc))
+      val select_b = io.b_eew === cond._1 && (cond._2 || b_altfmt === cond._3)
+      val in_b = recoded_in(data_type)._2(index)
+      val wide_b = if (data_type != fma_type) {
+        widen(in_b, data_type, fma_type, select_b)
+      } else {
+        in_b
+      }
+      when (select_b) {
+        b := wide_b
+      }
+
+      val select_c = io.c_eew === cond._1 && (cond._2 || c_altfmt === cond._3)
+      val in_c = recoded_in(data_type)._3(index)
+      val wide_c = if (data_type != fma_type) {
+        widen(in_c, data_type, fma_type, select_c)
+      } else {
+        in_c
+      }
+      when (select_c) {
+        c := wide_c
+      }
+
+      val select_out = out_select(data_type)
+      if (data_type == FType.E5M3){
+        val (out_bits, exc_flags) = rawUnroundedToFp8(fma_type, fma.io.unroundedOut, fma.io.unroundedInvalidExc, out_altfmt_pipe.bits, frm_pipe.bits, false.B)
+
+        when (select_out) {
+          out(data_type)(index) := Pipe(fma.io.validout, out_bits, depth-4).bits
+          exc(data_type).slice(index, index + ftype_exc_lanes(data_type)).foreach { _ := Pipe(fma.io.validout, exc_flags | fma.io.exceptionFlags, depth-4).bits }
+        }
+      }
+      else if (data_type != fma_type) {
+        val narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(fma_type.exp, fma_type.sig + 2, data_type.exp, data_type.sig, 0))
+        narrower.io.in := fma.io.unroundedOut
+        narrower.io.roundingMode := frm_pipe.bits
+        narrower.io.detectTininess := hardfloat.consts.tininess_afterRounding
+        narrower.io.invalidExc := fma.io.unroundedInvalidExc
+        narrower.io.infiniteExc := false.B
+
+        when (select_out) {
+          out(data_type)(index) := Pipe(fma.io.validout, data_type.ieee(narrower.io.out), depth-4).bits
+          exc(data_type).slice(index, index + ftype_exc_lanes(data_type)).foreach { _ := Pipe(fma.io.validout, narrower.io.exceptionFlags | fma.io.exceptionFlags, depth-4).bits }
+        }
+      }
+      else {
+        when (select_out) {
+          out(data_type)(index) := Pipe(fma.io.validout, data_type.ieee(fma.io.out), depth-4).bits
+          exc(data_type).slice(index, index + ftype_exc_lanes(data_type)).foreach { _ := Pipe(fma.io.validout, fma.io.exceptionFlags, depth-4).bits }
+        }
+      }
     }
-    when (out_eew_pipe.bits === log2Ceil(recodedWidth >> 3).U && ftype_cond) {
-      io.out := res.map(_._1).asUInt
-      io.exc := res.map(_._2).flatten
-    }
+
+    fma.io.a := RegEnable(a, fma_valid)
+    fma.io.b := RegEnable(Mux(io.addsub, 1.U << (fma_type.ieeeWidth - 1), b), fma_valid)
+    fma.io.c := RegEnable(Mux(io.mul, (a ^ b) & (1.U << fma_type.ieeeWidth), c), fma_valid)
+    counts.map { case (key, value) => (key, if (usedFor.contains(key)) value + 1 else value) }
   }}
+
+  out_select.foreach { case (ftype, sel) =>
+    when (sel) {
+      io.out := out(ftype).asUInt
+      io.exc := exc(ftype)
+    }
+  }
 }
 
 trait FMAFactory extends FunctionalUnitFactory {
@@ -222,8 +307,8 @@ class FPFMAPipe(depth: Int, elementwiseFP64: Boolean)(implicit p: Parameters) ex
   val nTandemFMA = dLenB / 8
 
   val eidx = Mux(io.pipe(0).bits.acc, 0.U, io.pipe(0).bits.eidx)
-  val one_bits = Mux1H(Seq(vd_eew === 3.U, vd_eew === 2.U, vd_eew === 1.U),
-                       Seq("h3FF0000000000000".U, "h3F8000003F800000".U, Mux(altfmt, "h3F803F803F803F80".U, "h3C003C003C003C00".U)))
+  val one_bits = Mux1H(Seq(vd_eew === 3.U, vd_eew === 2.U, vd_eew === 1.U, vd_eew === 0.U),
+                       Seq("h3FF0000000000000".U, "h3F8000003F800000".U, Mux(altfmt, "h3F803F803F803F80".U, "h3C003C003C003C00".U), Mux(altfmt, "h3C3C3C3C3C3C3C3C".U, "h3838383838383838".U)))
   val fmaCmd = ctrl.uint(FPFMACmd)
 
   val vec_rvs1 = io.pipe(0).bits.rvs1_data.asTypeOf(Vec(nTandemFMA, UInt(64.W)))
@@ -292,6 +377,7 @@ class FPFMAPipe(depth: Int, elementwiseFP64: Boolean)(implicit p: Parameters) ex
     fma_pipe.io.addsub := ctrl.bool(FPAdd) && !ctrl.bool(FPMul)
     fma_pipe.io.mul := ctrl.bool(FPMul) && !ctrl.bool(FPAdd)
     fma_pipe.io.out_eew := vd_eew
+    fma_pipe.io.widen := ctrl_widen_vs1 || ctrl_widen_vs2
     fma_pipe.io.altfmt := altfmt
 
     // FMA

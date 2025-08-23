@@ -17,7 +17,7 @@ object fp8ToE5M3 {
 			val subnormShift = PriorityEncoder(Reverse(sig))
 			val subnormSig = ((sig << 1.U) << subnormShift)(2, 0)
 			val subnormExp = 8.U(5.W) - subnormShift
-			val outE5M3 = Mux(isNaN,
+			Mux(isNaN,
 				sign ## "b11111100".U(8.W), // NaN
 				Mux(isSubnormal,
 					Mux(sig.orR,
@@ -27,8 +27,6 @@ object fp8ToE5M3 {
 					sign ## ((0.U(1.W) ## exp) + 8.U) ## sig // Normal
 				)
 			)
-			dontTouch(outE5M3)
-			outE5M3
 		})
 	}
 }
