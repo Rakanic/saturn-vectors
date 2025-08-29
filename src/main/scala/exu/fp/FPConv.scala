@@ -10,19 +10,19 @@ import saturn.common._
 import saturn.insns._
 import hardfloat._
 
-case object FPConvFactory extends FunctionalUnitFactory {
+case class FPConvFactory(mxConversion: Boolean) extends FunctionalUnitFactory {
   def insns = Seq(
     FCVT_SGL.restrictSEW(1,2,3),
-    FCVT_NRW.restrictSEW(0,1,2),
+    if (mxConversion) FCVT_NRW.restrictSEW(0,1,2) else FCVT_NRW.restrictSEW(1,2),
     FCVT_WID.restrictSEW(0,1,2)
   ).flatten.map(_.pipelined(3))
-  def generate(implicit p: Parameters) = new FPConvPipe()(p)
+  def generate(implicit p: Parameters) = new FPConvPipe(mxConversion)(p)
 }
 
 // Fixed depth 3
 // s0 - convert to raw/recoded
 // s1/s2 - perform conversion
-class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUParameters {
+class FPConvBlock(mxConversion: Boolean)(implicit p: Parameters) extends CoreModule()(p) with HasFPUParameters {
   val io = IO(new Bundle {
     val valid = Input(Bool())
     val in = Input(UInt(64.W))
@@ -276,31 +276,45 @@ class FPConvBlock(implicit p: Parameters) extends CoreModule()(p) with HasFPUPar
       exc := VecInit.fill(8)(s2d_exc(0))
     }
     when (s2_widen && s2_out_eew === 2.U) {
-      out := Mux(s2_altfmt, VecInit(bf162s_out).asUInt, VecInit(h2s_out).asUInt)
-      for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162s_exc(i/4), h2s_exc(i/4)) }
+      if (mxConversion) {
+        out := Mux(s2_altfmt, VecInit(bf162s_out).asUInt, VecInit(h2s_out).asUInt)
+        for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162s_exc(i/4), h2s_exc(i/4)) }
+      } else {
+        out := VecInit(h2s_out).asUInt
+        for (i <- 0 until 8) { exc(i) := h2s_exc(i/4) }
+      }
     }
-    when (s2_widen && s2_out_eew === 1.U) {
-      out := VecInit(fp82bf16_out).asUInt
-      for (i <- 0 until 8) { exc(i) := fp82bf16_exc(i/2) }
+    if (mxConversion) {
+      when (s2_widen && s2_out_eew === 1.U) {
+        out := VecInit(fp82bf16_out).asUInt
+        for (i <- 0 until 8) { exc(i) := fp82bf16_exc(i/2) }
+      }
     }
-    
+
     when (s2_narrow && s2_out_eew === 2.U) {
       out := d2s_out(0)
       exc := VecInit.fill(8)(d2s_exc(0))
     }
     when (!s2_widen && s2_out_eew === 1.U) {
-      out := VecInit(s2h_out.zip(s2bf16_out).map(o => 0.U(16.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
-      for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, s2bf16_exc(i/4), s2h_exc(i/4)) }
+      if (mxConversion) {
+        out := VecInit(s2h_out.zip(s2bf16_out).map(o => 0.U(16.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
+        for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, s2bf16_exc(i/4), s2h_exc(i/4)) }
+      } else {
+        out := VecInit(s2h_out.map(o => 0.U(16.W) ## o)).asUInt
+        for (i <- 0 until 8) { exc(i) := s2h_exc(i/4) }
+      }
     }
-    when (!s2_widen && s2_out_eew === 0.U) {
-      out := VecInit(bf162e4m3_out.zip(bf162e5m2_out).map(o => 0.U(8.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
-      for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162e5m2_exc(i/2), bf162e4m3_exc(i/2)) }
+    if (mxConversion) {
+      when (!s2_widen && s2_out_eew === 0.U) {
+        out := VecInit(bf162e4m3_out.zip(bf162e5m2_out).map(o => 0.U(8.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
+        for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162e5m2_exc(i/2), bf162e4m3_exc(i/2)) }
+      }
     }
   }
 }
 
-class FPConvPipe(implicit p: Parameters) extends PipelinedFunctionalUnit(3)(p) with HasFPUParameters {
-  val supported_insns = FPConvFactory.insns
+class FPConvPipe(mxConversion: Boolean)(implicit p: Parameters) extends PipelinedFunctionalUnit(3)(p) with HasFPUParameters {
+  val supported_insns = FPConvFactory(mxConversion).insns
 
   io.set_vxsat := false.B
   io.stall := false.B
@@ -323,7 +337,7 @@ class FPConvPipe(implicit p: Parameters) extends PipelinedFunctionalUnit(3)(p) w
   val expanded_rvs2_data = narrow2_expand(rvs2_data.asTypeOf(Vec(dLenB, UInt(8.W))), rvs2_eew,
     hi, false.B).asUInt
 
-  val conv_blocks = Seq.fill(dLen/64) { Module(new FPConvBlock) }
+  val conv_blocks = Seq.fill(dLen/64) { Module(new FPConvBlock(mxConversion)) }
   conv_blocks.zipWithIndex.foreach { case (c,i) =>
     c.io.valid := io.pipe(0).valid
     c.io.in := Mux(ctrl_widen,

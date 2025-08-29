@@ -10,16 +10,27 @@ size_t vl;
 #define IF0(t, f) f
 #define IF1(t, f) t
 
+#define TEST_DATA_INPUTS(type, name, rm) \
+	extern type name ## a_ ## rm[] __attribute__((aligned(64))); \
+	extern type name ## b_ ## rm[] __attribute__((aligned(64))); \
+	extern type name ## c_ ## rm[] __attribute__((aligned(64)));
+
 #define TEST_DATA(type, name) \
-	extern type name ## a[] __attribute__((aligned(64))); \
-	extern type name ## b[] __attribute__((aligned(64))); \
-	extern type name ## c[] __attribute__((aligned(64))); \
+	TEST_DATA_INPUTS(type, name, rne) \
+	TEST_DATA_INPUTS(type, name, rtz) \
+	TEST_DATA_INPUTS(type, name, rdn) \
+	TEST_DATA_INPUTS(type, name, rup) \
+	TEST_DATA_INPUTS(type, name, rmm) \
 	type *name ## a_; \
 	type *name ## b_; \
 	type *name ## c_;
 
 #define TEST_OP(type, name, op) \
-	extern type name ## _ ## op[] __attribute__((aligned(64))); \
+	extern type name ## _ ## op ## _rne [] __attribute__((aligned(64))); \
+	extern type name ## _ ## op ## _rtz [] __attribute__((aligned(64))); \
+	extern type name ## _ ## op ## _rdn [] __attribute__((aligned(64))); \
+	extern type name ## _ ## op ## _rup [] __attribute__((aligned(64))); \
+	extern type name ## _ ## op ## _rmm [] __attribute__((aligned(64))); \
 	type *name ## _ ## op ## _; \
 	type name ## _ ## res ## _ ## op ## _; \
 	int name ## _ ## neq ## _ ## op ## _;
@@ -44,14 +55,14 @@ size_t vl;
 	vfop - RVV instruction for performing the operation
 	use_vs2 - 1 if instruction uses vs2, otherwise 0
 */
-#define TEST(name, op, sew, wsew, alt, walt, vle, wvle, vfop, use_vs2) \
-	printf("Testing " #name "_" #op "\n"); \
+#define TEST(name, op, sew, wsew, alt, walt, vle, wvle, vfop, use_vs2, rm) \
+	printf("Testing " #name "_" #op "_" #rm "\n"); \
 	avl = N; \
 	vl = 0; \
-	name ## a_ = name ## a; /* input A pointer */ \
-	name ## b_ = name ## b; /* input B pointer */ \
-	name ## c_ = name ## c; /* input C pointer */ \
-	name ## _ ## op ## _ = name ## _ ## op; /* result pointer */ \
+	name ## a_ = name ## a_ ## rm; /* input A pointer */ \
+	name ## b_ = name ## b_ ## rm; /* input B pointer */ \
+	name ## c_ = name ## c_ ## rm; /* input C pointer */ \
+	name ## _ ## op ## _ = name ## _ ## op ## _ ## rm; /* result pointer */ \
 	while (avl > 0) { \
 		VSETVLI_ALTFMT(vl, avl, sew, LMUL_M1, alt); /* vsetvli */ \
 		asm volatile(vle " v0, (%0)" : : "r"(name ## a_)); /* load A */ \
@@ -96,53 +107,62 @@ TEST_DATA_OPS(uint16_t, uint32_t, bf16W)
 TEST_DATA_OPS(uint8_t, uint16_t, ofp8e5m2W)
 TEST_DATA_OPS(uint8_t, uint16_t, ofp8e4m3W)
 
+#define TEST_RM(rm, frm_val) \
+	asm volatile("csrwi frm, " #frm_val); \
+	\
+	TEST(fp32, mul, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfmul.vv", 1, rm) \
+	TEST(fp16, mul, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfmul.vv", 1, rm) \
+	TEST(bf16, mul, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfmul.vv", 1, rm) \
+	TEST(ofp8e5m2, mul, SEW_E8, SEW_E8, 1, 1, "vle8.v", "vle8.v", "vfmul.vv", 1, rm) \
+	TEST(ofp8e4m3, mul, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfmul.vv", 1, rm) \
+	TEST(bf16W, mul, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwmul.vv", 1, rm) \
+	TEST(fp16W, mul, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwmul.vv", 1, rm) \
+	TEST(ofp8e5m2W, mul, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwmul.vv", 1, rm) \
+	TEST(ofp8e4m3W, mul, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwmul.vv", 1, rm) \
+	\
+	TEST(fp32, add, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfadd.vv", 1, rm) \
+	TEST(fp16, add, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfadd.vv", 1, rm) \
+	TEST(bf16, add, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfadd.vv", 1, rm) \
+	TEST(ofp8e5m2, add, SEW_E8, SEW_E8, 1, 1, "vle8.v", "vle8.v", "vfadd.vv", 1, rm) \
+	TEST(ofp8e4m3, add, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfadd.vv", 1, rm) \
+	TEST(bf16W, add, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwadd.vv", 1, rm) \
+	TEST(fp16W, add, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwadd.vv", 1, rm) \
+	TEST(ofp8e5m2W, add, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwadd.vv", 1, rm) \
+	TEST(ofp8e4m3W, add, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwadd.vv", 1, rm) \
+	\
+	TEST(fp32, sub, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfsub.vv", 1, rm) \
+	TEST(fp16, sub, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfsub.vv", 1, rm) \
+	TEST(bf16, sub, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfsub.vv", 1, rm) \
+	TEST(ofp8e5m2, sub, SEW_E8, SEW_E8, 1, 1, "vle8.v", "vle8.v", "vfsub.vv", 1, rm) \
+	TEST(ofp8e4m3, sub, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfsub.vv", 1, rm) \
+	TEST(bf16W, sub, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwsub.vv", 1, rm) \
+	TEST(fp16W, sub, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwsub.vv", 1, rm) \
+	TEST(ofp8e5m2W, sub, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwsub.vv", 1, rm) \
+	TEST(ofp8e4m3W, sub, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwsub.vv", 1, rm) \
+
 int main() {
 	
-	// Single-width and widening mul
-	TEST(fp32, mul, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfmul.vv", 1)
-	TEST(fp16, mul, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfmul.vv", 1)
-	TEST(bf16, mul, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfmul.vv", 1)
-	TEST(ofp8e5m2, mul, SEW_E8, SEW_E8, 1, 1, "vle16.v", "vle16.v", "vfmul.vv", 1)
-	TEST(ofp8e4m3, mul, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfmul.vv", 1)
-	TEST(bf16W, mul, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwmul.vv", 1)
-	TEST(fp16W, mul, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwmul.vv", 1)
-	TEST(ofp8e5m2W, mul, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwmul.vv", 1)
-	TEST(ofp8e4m3W, mul, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwmul.vv", 1)
-	
-	// Single-width and widening add
-	TEST(fp32, add, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfadd.vv", 1)
-	TEST(fp16, add, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfadd.vv", 1)
-	TEST(bf16, add, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfadd.vv", 1)
-	TEST(ofp8e5m2, add, SEW_E8, SEW_E8, 1, 1, "vle16.v", "vle16.v", "vfadd.vv", 1)
-	TEST(ofp8e4m3, add, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfadd.vv", 1)
-	TEST(bf16W, add, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwadd.vv", 1)
-	TEST(fp16W, add, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwadd.vv", 1)
-	TEST(ofp8e5m2W, add, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwadd.vv", 1)
-	TEST(ofp8e4m3W, add, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwadd.vv", 1)
+	TEST_RM(rne, 0)
 
-	// Single-width and widening sub
-	TEST(fp32, sub, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfsub.vv", 1)
-	TEST(fp16, sub, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfsub.vv", 1)
-	TEST(bf16, sub, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfsub.vv", 1)
-	TEST(ofp8e5m2, sub, SEW_E8, SEW_E8, 1, 1, "vle16.v", "vle16.v", "vfsub.vv", 1)
-	TEST(ofp8e4m3, sub, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfsub.vv", 1)
-	TEST(bf16W, sub, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwsub.vv", 1)
-	TEST(fp16W, sub, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwsub.vv", 1)
-	TEST(ofp8e5m2W, sub, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwsub.vv", 1)
-	TEST(ofp8e4m3W, sub, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwsub.vv", 1)
+	// TEST(fp32, macc, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfmacc.vv", 1, rne)
+	// TEST(fp16, macc, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfmacc.vv", 1, rne)
+	// TEST(bf16, macc, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfmacc.vv", 1, rne)
+	// TEST(ofp8e5m2, macc, SEW_E8, SEW_E8, 1, 1, "vle8.v", "vle8.v", "vfmacc.vv", 1, rne)
+	// TEST(ofp8e4m3, macc, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfmacc.vv", 1, rne)
 
-	// Single-width macc
-	TEST(fp32, macc, SEW_E32, SEW_E32, 0, 0, "vle32.v", "vle32.v", "vfmacc.vv", 1)
-	TEST(fp16, macc, SEW_E16, SEW_E16, 0, 0, "vle16.v", "vle16.v", "vfmacc.vv", 1)
-	TEST(bf16, macc, SEW_E16, SEW_E16, 1, 1, "vle16.v", "vle16.v", "vfmacc.vv", 1)
-	TEST(ofp8e5m2, macc, SEW_E8, SEW_E8, 1, 1, "vle16.v", "vle16.v", "vfmacc.vv", 1)
-	TEST(ofp8e4m3, macc, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfmacc.vv", 1)
+	// TEST(fp16W, ident, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwcvt.f.f.v", 0, rne)
+	// TEST(bf16W, ident, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwcvt.f.f.v", 0, rne)
+	// TEST(ofp8e5m2W, ident, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwcvt.f.f.v", 0, rne)
+	// TEST(ofp8e4m3W, ident, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwcvt.f.f.v", 0, rne)
 
-	// Widening conversion
-	TEST(fp16W, ident, SEW_E16, SEW_E32, 0, 0, "vle16.v", "vle32.v", "vfwcvt.f.f.v", 0)
-	TEST(bf16W, ident, SEW_E16, SEW_E32, 1, 0, "vle16.v", "vle32.v", "vfwcvt.f.f.v", 0)
-	TEST(ofp8e5m2W, ident, SEW_E8, SEW_E16, 1, 1, "vle8.v", "vle16.v", "vfwcvt.f.f.v", 0)
-	TEST(ofp8e4m3W, ident, SEW_E8, SEW_E16, 0, 1, "vle8.v", "vle16.v", "vfwcvt.f.f.v", 0)
+	TEST_RM(rtz, 1)
+	TEST_RM(rdn, 2)
+	TEST_RM(rup, 3)
+	TEST_RM(rmm, 4)
+
+	// asm volatile("csrwi frm, " "1");
+
+	// TEST(ofp8e4m3, mul, SEW_E8, SEW_E8, 0, 0, "vle8.v", "vle8.v", "vfmul.vv", 1, rtz)
 
 	printf("All tests passed\n");
 

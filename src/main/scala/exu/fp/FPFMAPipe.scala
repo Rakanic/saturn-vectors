@@ -10,7 +10,7 @@ import saturn.common._
 import saturn.insns._
 
 
-class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) extends FPUModule()(p) {
+class TandemFMAPipe(depth: Int, buildFP64: Boolean, mxFPFMA: Boolean)(implicit p: Parameters) extends FPUModule()(p) {
   require (depth >= 4)
   val io = IO(new Bundle {
     val valid = Input(Bool())
@@ -104,15 +104,15 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
   )
 
   val ftype_used_for = Map(
-    FType.D -> Seq(FType.D, FType.S, FType.H, FType.BF16, FType.E5M3),
-    FType.S -> Seq(FType.S, FType.H, FType.BF16, FType.E5M3),
-    FType.H -> Seq(FType.H, FType.E5M3),
+    FType.D -> { if (mxFPFMA) Seq(FType.D, FType.S, FType.H, FType.BF16, FType.E5M3) else Seq(FType.D, FType.S, FType.H) },
+    FType.S -> { if (mxFPFMA) Seq(FType.S, FType.H, FType.BF16, FType.E5M3) else Seq(FType.S, FType.H) },
+    FType.H -> { if (mxFPFMA) Seq(FType.H, FType.E5M3) else Seq(FType.H) },
     FType.BF16 -> Seq(FType.BF16, FType.E5M3),
     FType.E5M3 -> Seq(FType.E5M3)
   )
 
-  val fma_params = Seq( // Larger ones need to be spaced out correctly to easily select the right indeces when widening
-    if (buildFP64) FType.D else FType.S,
+  val fma_types = if (mxFPFMA) Seq( // Larger ones need to be spaced out correctly to easily select the right indeces when widening
+    (if (buildFP64) FType.D else FType.S),
     FType.H,
     FType.BF16,
     FType.E5M3,
@@ -120,6 +120,11 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
     FType.H,
     FType.BF16,
     FType.E5M3
+  ) else Seq(
+    (if (buildFP64) FType.D else FType.S),
+    FType.H,
+    FType.S,
+    FType.H
   )
 
   val ftype_exc_lanes = Map(
@@ -153,16 +158,21 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
     key -> (out_eew_pipe.bits === cond._1 && (cond._2 || out_altfmt_pipe.bits === cond._3))
   }
 
-  fma_params.foldLeft(Map(
+  val s1_out_select = ftype_conditions.map { case (key, cond) =>
+    key -> (RegNext(io.out_eew, 0.U) === cond._1 && (cond._2 || RegNext(out_altfmt, 0.U) === cond._3))
+  }
+
+  fma_types.foldLeft(Map(
     FType.D -> 0, FType.S -> 0, FType.H -> 0, FType.BF16 -> 0, FType.E5M3 -> 0
   )) { (counts, fma_type) => {
     val usedFor = ftype_used_for(fma_type)
     val fma_valid = usedFor.map(valid_signals(_)).foldLeft(0.U)(_|_).asBool
     val s1_valid = RegNext(fma_valid, false.B)
     val fma = Module(new MulAddRecFNPipe(depth-2, fma_type.exp, fma_type.sig))
+    val do_narrow = s1_out_select.filter(_._1 != fma_type).valuesIterator.foldLeft(0.U)(_|_).asBool
     fma.io.validin      := s1_valid
     fma.io.op           := Mux(s1_valid, s1_op, 0.U)
-    fma.io.roundingMode := Mux(s1_valid, s1_frm, 0.U)
+    fma.io.roundingMode := Mux(s1_valid, Mux(do_narrow || (fma_type == FType.E5M3).B, hardfloat.consts.round_minMag, s1_frm), 0.U)
     fma.io.detectTininess := hardfloat.consts.tininess_afterRounding
 
     val a = Wire(UInt(fma_type.recodedWidth.W))
@@ -216,7 +226,7 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
 
         when (select_out) {
           out(data_type)(index) := Pipe(fma.io.validout, out_bits, depth-4).bits
-          exc(data_type).slice(index, index + ftype_exc_lanes(data_type)).foreach { _ := Pipe(fma.io.validout, exc_flags | fma.io.exceptionFlags, depth-4).bits }
+          exc(data_type).slice(index, index + ftype_exc_lanes(data_type)).foreach { _ := Pipe(fma.io.validout, exc_flags, depth-4).bits }
         }
       }
       else if (data_type != fma_type) {
@@ -229,7 +239,7 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean)(implicit p: Parameters) exte
 
         when (select_out) {
           out(data_type)(index) := Pipe(fma.io.validout, data_type.ieee(narrower.io.out), depth-4).bits
-          exc(data_type).slice(index, index + ftype_exc_lanes(data_type)).foreach { _ := Pipe(fma.io.validout, narrower.io.exceptionFlags | fma.io.exceptionFlags, depth-4).bits }
+          exc(data_type).slice(index, index + ftype_exc_lanes(data_type)).foreach { _ := Pipe(fma.io.validout, narrower.io.exceptionFlags, depth-4).bits }
         }
       }
       else {
@@ -272,7 +282,7 @@ trait FMAFactory extends FunctionalUnitFactory {
   ).map(_.pipelined(depth)).map(_.restrictSEW(0,1,2,3)).flatten
 }
 
-case class SIMDFPFMAFactory(depth: Int, elementWiseFP64: Boolean = false) extends FMAFactory {
+case class SIMDFPFMAFactory(depth: Int, elementWiseFP64: Boolean = false, mxFPFMA: Boolean) extends FMAFactory {
   def insns = if (elementWiseFP64) {
     base_insns.map { insn =>
       if (insn.lookup(SEW).value == 3 || (insn.lookup(SEW).value == 2 && insn.lookup(Wide2VD).value == 1)) {
@@ -284,11 +294,11 @@ case class SIMDFPFMAFactory(depth: Int, elementWiseFP64: Boolean = false) extend
   } else {
     base_insns
   }
-  def generate(implicit p: Parameters) = new FPFMAPipe(depth, elementWiseFP64)(p)
+  def generate(implicit p: Parameters) = new FPFMAPipe(depth, elementWiseFP64, mxFPFMA)(p)
 }
 
-class FPFMAPipe(depth: Int, elementwiseFP64: Boolean)(implicit p: Parameters) extends PipelinedFunctionalUnit(depth)(p) with HasFPUParameters {
-  val supported_insns = SIMDFPFMAFactory(depth, elementwiseFP64).insns
+class FPFMAPipe(depth: Int, elementwiseFP64: Boolean, mxFPFMA: Boolean)(implicit p: Parameters) extends PipelinedFunctionalUnit(depth)(p) with HasFPUParameters {
+  val supported_insns = SIMDFPFMAFactory(depth, elementwiseFP64, mxFPFMA).insns
 
   io.stall := false.B
   io.set_vxsat := false.B
@@ -316,7 +326,7 @@ class FPFMAPipe(depth: Int, elementwiseFP64: Boolean)(implicit p: Parameters) ex
   val vec_rvd = io.pipe(0).bits.rvd_data.asTypeOf(Vec(nTandemFMA, UInt(64.W)))
 
   val pipe_out = (0 until nTandemFMA).map { i =>
-    val fma_pipe = Module(new TandemFMAPipe(depth, i == 0 || !elementwiseFP64))
+    val fma_pipe = Module(new TandemFMAPipe(depth, i == 0 || !elementwiseFP64, mxFPFMA))
     val widening_vs1_bits = Mux(vd_eew === 3.U,
       0.U(32.W) ## extractElem(io.pipe(0).bits.rvs1_data, 2.U, eidx + i.U)(31,0),
       Mux(vd_eew === 2.U,

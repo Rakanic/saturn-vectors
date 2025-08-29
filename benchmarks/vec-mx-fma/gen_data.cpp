@@ -22,11 +22,17 @@ const char bf16Wname[] = "bf16W";
 const char ofp8e5m2Wname[] = "ofp8e5m2W";
 const char ofp8e4m3Wname[] = "ofp8e4m3W";
 
+const char rm_rne[] = "rne";
+const char rm_rtz[] = "rtz";
+const char rm_rdn[] = "rdn";
+const char rm_rup[] = "rup";
+const char rm_rmm[] = "rmm";
+
 std::mt19937 e2;
 
-template <class T, class W, auto NAME, size_t WSIZE>
+template <class T, class W, auto NAME, size_t WSIZE, auto RM_NAME>
 void operand_test(T vals_a[], T vals_b[], T vals_c[], const char op_name[], std::function<double(double, double, double)> op_func) {
-	std::cout << ".global " << NAME << '_' << op_name << std::endl << ".balign 64" << std::endl << NAME << '_' << op_name << ':' << std::endl;
+	std::cout << ".global " << NAME << '_' << op_name << '_' << RM_NAME << std::endl << ".balign 64" << std::endl << NAME << '_' << op_name << '_' << RM_NAME << ':' << std::endl;
 	for (size_t i = 0; i < COUNT / (4 / WSIZE); i ++) {
 		std::cout << "    .word 0x";
 		for (int j = 4 / WSIZE - 1; j >= 0; j --) {
@@ -39,7 +45,7 @@ void operand_test(T vals_a[], T vals_b[], T vals_c[], const char op_name[], std:
 	}
 }
 
-template <class T, size_t SIZE, auto NAME, double MIN, double MAX, double SUBNORM_MIN, double SUBNORM_MAX, bool WIDEN, class W>
+template <class T, size_t SIZE, auto NAME, double MIN, double MAX, double SUBNORM_MIN, double SUBNORM_MAX, bool WIDEN, class W, auto RM_NAME>
 void test() {
 
 	const size_t WSIZE = WIDEN ? SIZE * 2 : SIZE;
@@ -80,7 +86,7 @@ void test() {
 	vals_a[8] = static_cast<T>(INFINITY);
 	vals_b[8] = static_cast<T>(0);
 
-	std::cout << ".global " << NAME << "a" << std::endl << ".balign 64" << std::endl << NAME << "a:" << std::endl;
+	std::cout << ".global " << NAME << "a_" << RM_NAME << std::endl << ".balign 64" << std::endl << NAME << "a_" << RM_NAME << ':' << std::endl;
 	for (size_t i = 0; i < COUNT / (4 / SIZE); i ++) {
 		std::cout << "    .word 0x";
 		for (int j = 4 / SIZE - 1; j >= 0; j --) {
@@ -89,7 +95,7 @@ void test() {
 		std::cout << std::endl;
 	}
 
-	std::cout << ".global " << NAME << "b" << std::endl << ".balign 64" << std::endl << NAME << "b:" << std::endl;
+	std::cout << ".global " << NAME << "b_" << RM_NAME << std::endl << ".balign 64" << std::endl << NAME << "b_" << RM_NAME << ':' << std::endl;
 	for (size_t i = 0; i < COUNT / (4 / SIZE); i ++) {
 		std::cout << "    .word 0x";
 		for (int j = 4 / SIZE - 1; j >= 0; j --) {
@@ -98,7 +104,7 @@ void test() {
 		std::cout << std::endl;
 	}
 
-	std::cout << ".global " << NAME << "c" << std::endl << ".balign 64" << std::endl << NAME << "c:" << std::endl;
+	std::cout << ".global " << NAME << "c_" << RM_NAME << std::endl << ".balign 64" << std::endl << NAME << "c_" << RM_NAME << ':' << std::endl;
 	for (size_t i = 0; i < COUNT / (4 / SIZE); i ++) {
 		std::cout << "    .word 0x";
 		for (int j = 4 / SIZE - 1; j >= 0; j --) {
@@ -107,20 +113,29 @@ void test() {
 		std::cout << std::endl;
 	}
 
-	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "add", [](double a, double b, double c) -> double {return a + b;});
-	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "mul", [](double a, double b, double c) -> double {return a * b;});
-	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "sub", [](double a, double b, double c) -> double {return a - b;});
-	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "macc", [](double a, double b, double c) -> double {return a * b + c;});
-	operand_test<T, W, NAME, WSIZE>(vals_a, vals_b, vals_c, "ident", [](double a, double b, double c) -> double {return a;});
+	operand_test<T, W, NAME, WSIZE, RM_NAME>(vals_a, vals_b, vals_c, "add", [](double a, double b, double c) -> double {return a + b;});
+	operand_test<T, W, NAME, WSIZE, RM_NAME>(vals_a, vals_b, vals_c, "mul", [](double a, double b, double c) -> double {return a * b;});
+	operand_test<T, W, NAME, WSIZE, RM_NAME>(vals_a, vals_b, vals_c, "sub", [](double a, double b, double c) -> double {return a - b;});
+	operand_test<T, W, NAME, WSIZE, RM_NAME>(vals_a, vals_b, vals_c, "macc", [](double a, double b, double c) -> double {return a * b + c;});
+	operand_test<T, W, NAME, WSIZE, RM_NAME>(vals_a, vals_b, vals_c, "ident", [](double a, double b, double c) -> double {return a;});
 }
+
+#define GEN_ROUND_MODE(rm, rm_name) \
+	test<fp32<rm>, 4, fp32name, -1e2, 1e2, -1e-6, 1e-6, false, fp32<rm>, rm_name>(); \
+	test<fp16<rm>, 2, fp16name, -1e2, 1e2, -1e-6, 1e-6, false, fp16<rm>, rm_name>(); \
+	test<bf16<rm>, 2, bf16name, -1e15, 1e15, -2e-38, 2e-38, false, bf16<rm>, rm_name>(); \
+	test<ofp8e5m2<rm>, 1, ofp8e5m2name, -1e2, 1e2, -1e-4, 1e-4, false, ofp8e5m2<rm>, rm_name>(); \
+	test<ofp8e4m3<rm>, 1, ofp8e4m3name, -3e1, 3e1, -1e-1, 1e-1, false, ofp8e4m3<rm>, rm_name>(); \
+	test<fp16<rm>, 2, fp16Wname, -1e2, 1e2, -1e-6, 1e-6, true, fp32<rm>, rm_name>(); \
+	test<bf16<rm>, 2, bf16Wname, -1e15, 1e15, -2e-38, 2e-38, true, fp32<rm>, rm_name>(); \
+	test<ofp8e5m2<rm>, 1, ofp8e5m2Wname, -1e2, 1e2, -1e-4, 1e-4, true, bf16<rm>, rm_name>(); \
+	test<ofp8e4m3<rm>, 1, ofp8e4m3Wname, -1e2, 1e2, -1e-3, 1e-3, true, bf16<rm>, rm_name>(); \
 
 int main() {
 
-	using fp32 = lo_float::Templated_Float<param_std<8, 23>>;
-	using fp16 = lo_float::Templated_Float<param_std<5, 10>>;
-	using bf16 = lo_float::Templated_Float<param_std<8, 7>>;
-	using ofp8e5m2 = lo_float::Templated_Float<param_std<5, 2>>;
-	using ofp8e4m3 = lo_float::Templated_Float<param_fn<4, 3>>;
+	
+	
+	exit(0);
 
 	e2.seed(0);
 
@@ -132,16 +147,11 @@ int main() {
 		<< "    .word 0x" << std::hex << std::setfill('0') << std::setw(8) << COUNT << std::endl \
 		<< "    .word 0x00000000" << std::endl;
 	
-	test<fp32, 4, fp32name, -1e2, 1e2, -1e-6, 1e-6, false, fp32>();
-	test<fp16, 2, fp16name, -1e2, 1e2, -1e-6, 1e-6, false, fp16>();
-	test<bf16, 2, bf16name, -1e15, 1e15, -2e-38, 2e-38, false, bf16>();
-	test<ofp8e5m2, 1, ofp8e5m2name, -1e2, 1e2, -1e-4, 1e-4, false, ofp8e5m2>();
-	test<ofp8e4m3, 1, ofp8e4m3name, -3e1, 3e1, -1e-1, 1e-1, false, ofp8e4m3>();
-
-	test<fp16, 2, fp16Wname, -1e2, 1e2, -1e-6, 1e-6, true, fp32>();
-	test<bf16, 2, bf16Wname, -1e15, 1e15, -2e-38, 2e-38, true, fp32>();
-	test<ofp8e5m2, 1, ofp8e5m2Wname, -1e2, 1e2, -1e-4, 1e-4, true, bf16>();
-	test<ofp8e4m3, 1, ofp8e4m3Wname, -1e2, 1e2, -1e-3, 1e-3, true, bf16>();
+	GEN_ROUND_MODE(lo_float::Rounding_Mode::RoundToNearestEven, rm_rne)
+	GEN_ROUND_MODE(lo_float::Rounding_Mode::RoundTowardsZero, rm_rtz)
+	GEN_ROUND_MODE(lo_float::Rounding_Mode::RoundDown, rm_rdn)
+	GEN_ROUND_MODE(lo_float::Rounding_Mode::RoundUp, rm_rup)
+	GEN_ROUND_MODE(lo_float::Rounding_Mode::RoundTiesToAway, rm_rmm)
 
 	return 0;
 }

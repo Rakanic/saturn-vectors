@@ -60,12 +60,12 @@ struct FN_NaNChecker {
 	}
 };
 
-template <int exp, int sig>
+template <int exp, int sig, lo_float::Rounding_Mode rm=lo_float::Rounding_Mode::RoundToNearestEven>
 constexpr lo_float::FloatingPointParams param_std(
 	exp + sig + 1, // Total bitwidth
 	sig, // Mantissa
 	(1 << (exp - 1)) - 1, // Bias
-	lo_float::Rounding_Mode::RoundToNearestEven,
+	rm,
 	lo_float::Inf_Behaviors::Extended,
 	lo_float::NaN_Behaviors::QuietNaN,
 	lo_float::Signedness::Signed,
@@ -74,12 +74,12 @@ constexpr lo_float::FloatingPointParams param_std(
 	1 // stoch_len
 );
 
-template <int exp, int sig>
+template <int exp, int sig, lo_float::Rounding_Mode rm=lo_float::Rounding_Mode::RoundToNearestEven>
 constexpr lo_float::FloatingPointParams param_fn(
 	exp + sig + 1, // Total bitwidth
 	sig, // Mantissa
 	(1 << (exp - 1)) - 1, // Bias
-	lo_float::Rounding_Mode::RoundToNearestEven,
+	rm,
 	lo_float::Inf_Behaviors::Extended,
 	lo_float::NaN_Behaviors::QuietNaN,
 	lo_float::Signedness::Signed,
@@ -87,3 +87,14 @@ constexpr lo_float::FloatingPointParams param_fn(
 	FN_NaNChecker<exp, sig>(),
 	1 // stoch_len
 );
+
+template <lo_float::Rounding_Mode rm>
+using fp32 = lo_float::Templated_Float<param_std<8, 23, rm>>;
+template <lo_float::Rounding_Mode rm>
+using fp16 = lo_float::Templated_Float<param_std<5, 10, rm>>;
+template <lo_float::Rounding_Mode rm>
+using bf16 = lo_float::Templated_Float<param_std<8, 7, rm>>;
+template <lo_float::Rounding_Mode rm>
+using ofp8e5m2 = lo_float::Templated_Float<param_std<5, 2, rm>>;
+template <lo_float::Rounding_Mode rm>
+using ofp8e4m3 = lo_float::Templated_Float<param_fn<4, 3, rm>>;

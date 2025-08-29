@@ -20,7 +20,7 @@ object rawUnroundedToFp8 {
 		e5m3Narrower.io.invalidExc := unroundedInvalidExc
 		e5m3Narrower.io.infiniteExc := false.B
 
-		val e4m3Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(unroundedType.exp, unroundedType.sig + 2, FType.E4M3.exp, FType.E5M3.sig, 0))
+		val e4m3Narrower = Module(new hardfloat.RoundAnyRawFNToRecFN(unroundedType.exp, unroundedType.sig + 2, FType.E4M3.exp, FType.E4M3.sig, 0))
 		e4m3Narrower.io.in := unroundedIn
 		e4m3Narrower.io.roundingMode := roundingMode
 		e4m3Narrower.io.detectTininess := hardfloat.consts.tininess_afterRounding
@@ -31,14 +31,17 @@ object rawUnroundedToFp8 {
 		val exceptionFlags = Wire(UInt(5.W))
 		outBits := DontCare
 		exceptionFlags := DontCare
+		
+		val e5m2Ieee = FType.E5M2.ieee(e5m2Narrower.io.out)
+		val e5m3Ieee = FType.E5M3.ieee(e5m3Narrower.io.out)
+		val e4m3Ieee = FType.E4M3.ieee(e4m3Narrower.io.out)
+		dontTouch(e5m3Ieee)
+		dontTouch(e4m3Ieee)
 
 		when (altfmt) { // E5M2
-			val e5m2Ieee = FType.E5M2.ieee(e5m2Narrower.io.out)
 			outBits := saturateE5M2(e5m2Ieee, saturate)
 			exceptionFlags := e5m2Narrower.io.exceptionFlags
 		} .otherwise { // E4M3
-			val e5m3Ieee = FType.E5M3.ieee(e5m3Narrower.io.out)
-			val e4m3Ieee = FType.E4M3.ieee(e4m3Narrower.io.out)
 			outBits := assembleOFPE4M3(e5m3Ieee, e4m3Ieee, saturate)
 			exceptionFlags := 0.U(5.W)
 		}
@@ -64,10 +67,11 @@ object assembleOFPE4M3 {
 		val sigE4M3 = ieeeE4M3(2, 0)
 		val expE5M3 = ieeeE5M3(7, 3)
 		val sigE5M3 = ieeeE5M3(2, 0)
-		val special = expE4M3 === "b1111".U(4.W)
-		val possibleInf = expE5M3(4, 3) === "b11".U(2.W) || sigE5M3 === "b111".U(3.W)
-		val outValue = Mux(special, // Possible NaN or Inf
-			sign ## Mux(sigE4M3 =/= "b000".U(3.W), // NaN
+		val special = expE5M3(4, 3) === "b11".U(2.W) // Values that overflow to infinity or NaN for OFP8 E4M3
+		val overflow = expE5M3 === "b10111".U(5.W) // Values that overflow to infinity for IEEE E4M3 but not OFP8 E4M3
+		val possibleInf = expE5M3(4, 3) === "b11".U(2.W) || sigE5M3 === "b111".U(3.W) // True inf check for values in the IEEE E4M3 inf range
+		val outValue = Mux(special || overflow, // Possible NaN or Inf
+			sign ## Mux(special && sigE5M3 =/= "b000".U(3.W), // NaN
 				"b1111111".U(7.W),
 				Mux(possibleInf, // Inf
 					"b111111".U(6.W) ## !saturate,
