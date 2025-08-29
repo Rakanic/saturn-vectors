@@ -113,13 +113,8 @@ class OuterProductCell(implicit p: Parameters) extends CoreModule()(p) with HasO
   // Matrix Register + Logic
   val regs = Reg(Vec(regsPerCell, UInt(opuParams.cWidthRec.W)))
 
-  // widen the inputs
-  val e4m3a = FType.E4M3.recode(io.in_l.asUInt)
-  val e4m3b = FType.E4M3.recode(io.in_t.asUInt)
-  val e5m2a = FType.E5M2.recode(io.in_l.asUInt)
-  val e5m2b = FType.E5M2.recode(io.in_t.asUInt)
-  val f8a = Mux(io.altfmt, e5m2a, e4m3a)
-  val f8b = Mux(io.altfmt, e5m2b, e4m3b)
+  val f8a = FType.E5M3.recode(fp8ToE5M3(io.in_l.asUInt, io.altfmt))
+  val f8b = FType.E5M3.recode(fp8ToE5M3(io.in_t.asUInt, io.altfmt))
   val f8aw = widen(f8a, FType.E5M3, FType.S, io.macc)
   val f8bw = widen(f8b, FType.E5M3, FType.S, io.macc)
 
