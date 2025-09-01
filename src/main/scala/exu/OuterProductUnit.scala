@@ -84,6 +84,69 @@ trait HasOPUParams extends HasVectorParams { this: HasCoreParameters =>
 //   io.out := regs(io.mrf_idx)
 // }
 
+// class OuterProductCell(implicit p: Parameters) extends CoreModule()(p) with HasOPUParams {
+
+//   val io = IO(new Bundle{
+//     // Data signals
+//     val in_l = Input(SInt(opuParams.aWidth.W)) // left input
+//     val in_t = Input(SInt(opuParams.bWidth.W)) // top input
+
+//     // Contol Signals
+//     val mrf_idx = Input(UInt(cellRegIdxBits.W)) // Index for µarch register to write
+//     val altfmt = Input(Bool()) // alternate format for outer product
+
+//     val macc = Input(Bool())
+//     val mvin = Input(Bool())
+//     val mvin_bcast = Input(Bool())
+//     val mvin_data = Input(SInt(opuParams.cWidth.W))
+//     val out = Output(UInt(opuParams.cWidth.W))
+//   })
+
+//     def widen(in: UInt, inT: FType, outT: FType, active: Bool): UInt = {
+//       val widen = Module(new hardfloat.RecFNToRecFN(inT.exp, inT.sig, outT.exp, outT.sig))
+//       widen.io.in := Mux(active, in, 0.U)
+//       widen.io.roundingMode := hardfloat.consts.round_near_even
+//       widen.io.detectTininess := hardfloat.consts.tininess_afterRounding
+//       widen.io.out
+//     }
+
+//   // Matrix Register + Logic
+//   val regs = Reg(Vec(regsPerCell, UInt(opuParams.cWidthRec.W)))
+
+//   val f8a = FType.E5M3.recode(fp8ToE5M3(io.in_l.asUInt, io.altfmt))
+//   val f8b = FType.E5M3.recode(fp8ToE5M3(io.in_t.asUInt, io.altfmt))
+//   val f8aw = widen(f8a, FType.E5M3, FType.S, io.macc)
+//   val f8bw = widen(f8b, FType.E5M3, FType.S, io.macc)
+
+//   val fma = Module(new MulAddRecFNPipe(0, FType.S.exp, FType.S.sig))
+//   fma.io.validin := io.macc
+//   fma.io.op := 0.U // FMA
+//   fma.io.roundingMode := hardfloat.consts.round_near_even
+//   fma.io.detectTininess := hardfloat.consts.tininess_afterRounding
+//   fma.io.a := f8aw
+//   fma.io.b := f8bw
+//   fma.io.c := regs(io.mrf_idx)
+
+//   val sum = Mux(fma.io.validout, fma.io.out, 0.U)
+
+//   // // TODO: Need to check for overflow and saturate to accumulator width
+//   // val prod = Mux(io.macc, io.in_l * io.in_t, 0.S)
+//   // val sum = prod + regs(io.mrf_idx)
+
+//   // Data going into MRF
+//   for (i <- 0 until regsPerCell) {
+//     val tile_match = (io.mrf_idx >> log2Ceil(regsPerTileReg)) === (i >> log2Ceil(regsPerTileReg)).U
+//     val subtile_match = io.mrf_idx(log2Ceil(regsPerTileReg)-1,0) === (i % regsPerTileReg).U
+
+//     when (tile_match && (((io.mvin || io.macc) && subtile_match) || io.mvin_bcast)) {
+//       regs(i) := Mux(io.macc, sum, FType.S.recode(io.mvin_data.asUInt))
+//     }
+//   }
+
+//   // io.out := 0.U
+//   io.out := FType.S.ieee(regs(io.mrf_idx))
+// }
+
 class OuterProductCell(implicit p: Parameters) extends CoreModule()(p) with HasOPUParams {
 
   val io = IO(new Bundle{
@@ -115,19 +178,30 @@ class OuterProductCell(implicit p: Parameters) extends CoreModule()(p) with HasO
 
   val f8a = FType.E5M3.recode(fp8ToE5M3(io.in_l.asUInt, io.altfmt))
   val f8b = FType.E5M3.recode(fp8ToE5M3(io.in_t.asUInt, io.altfmt))
-  val f8aw = widen(f8a, FType.E5M3, FType.S, io.macc)
-  val f8bw = widen(f8b, FType.E5M3, FType.S, io.macc)
+  val f8aw = widen(f8a, FType.E5M3, FType.BF16, io.macc)
+  val f8bw = widen(f8b, FType.E5M3, FType.BF16, io.macc)
 
-  val fma = Module(new MulAddRecFNPipe(0, FType.S.exp, FType.S.sig))
+  val fma = Module(new MulAddRecFNPipe(0, FType.BF16.exp, FType.BF16.sig))
   fma.io.validin := io.macc
   fma.io.op := 0.U // FMA
   fma.io.roundingMode := hardfloat.consts.round_near_even
   fma.io.detectTininess := hardfloat.consts.tininess_afterRounding
   fma.io.a := f8aw
   fma.io.b := f8bw
-  fma.io.c := regs(io.mrf_idx)
+  fma.io.c := 0.U
 
-  val sum = Mux(fma.io.validout, fma.io.out, 0.U)
+  val resultw = widen(fma.io.out, FType.BF16, FType.S, fma.io.validout)
+
+  val fma2 = Module(new MulAddRecFNPipe(0, FType.S.exp, FType.S.sig))
+  fma2.io.validin := fma.io.validout
+  fma2.io.op := 0.U // FMA2
+  fma2.io.roundingMode := hardfloat.consts.round_near_even
+  fma2.io.detectTininess := hardfloat.consts.tininess_afterRounding
+  fma2.io.a := resultw
+  fma2.io.b := FType.S.recode("h3F800000".U) // 1.0 in recoded
+  fma2.io.c := regs(io.mrf_idx)
+
+  val sum = Mux(fma2.io.validout, fma2.io.out, 0.U)
 
   // // TODO: Need to check for overflow and saturate to accumulator width
   // val prod = Mux(io.macc, io.in_l * io.in_t, 0.S)
