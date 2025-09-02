@@ -158,10 +158,6 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean, mxFPFMA: Boolean)(implicit p
     key -> (out_eew_pipe.bits === cond._1 && (cond._2 || out_altfmt_pipe.bits === cond._3))
   }
 
-  val s1_out_select = ftype_conditions.map { case (key, cond) =>
-    key -> (RegNext(io.out_eew, 0.U) === cond._1 && (cond._2 || RegNext(out_altfmt, 0.U) === cond._3))
-  }
-
   fma_types.foldLeft(Map(
     FType.D -> 0, FType.S -> 0, FType.H -> 0, FType.BF16 -> 0, FType.E5M3 -> 0
   )) { (counts, fma_type) => {
@@ -169,10 +165,9 @@ class TandemFMAPipe(depth: Int, buildFP64: Boolean, mxFPFMA: Boolean)(implicit p
     val fma_valid = usedFor.map(valid_signals(_)).foldLeft(0.U)(_|_).asBool
     val s1_valid = RegNext(fma_valid, false.B)
     val fma = Module(new MulAddRecFNPipe(depth-2, fma_type.exp, fma_type.sig))
-    val do_narrow = s1_out_select.filter(_._1 != fma_type).valuesIterator.foldLeft(0.U)(_|_).asBool
     fma.io.validin      := s1_valid
     fma.io.op           := Mux(s1_valid, s1_op, 0.U)
-    fma.io.roundingMode := Mux(s1_valid, Mux(do_narrow || (fma_type == FType.E5M3).B, hardfloat.consts.round_minMag, s1_frm), 0.U)
+    fma.io.roundingMode := Mux(s1_valid, s1_frm, 0.U)
     fma.io.detectTininess := hardfloat.consts.tininess_afterRounding
 
     val a = Wire(UInt(fma_type.recodedWidth.W))

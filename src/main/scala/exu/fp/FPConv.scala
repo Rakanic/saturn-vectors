@@ -60,7 +60,7 @@ class FPConvBlock(mxConversion: Boolean)(implicit p: Parameters) extends CoreMod
     )
   }
 
-  val s0_out_eew = Mux(io.widen, io.in_eew + 1.U, Mux(io.narrow, io.in_eew - 1.U, io.in_eew))
+  val s0_out_eew = Mux(io.narrow, io.in_eew - 1.U, Mux(io.widen, io.in_eew + 1.U, io.in_eew))
 
   val in64 = Seq(io.in)
   val in32 = io.in.asTypeOf(Vec(2, UInt(32.W)))
@@ -220,8 +220,8 @@ class FPConvBlock(mxConversion: Boolean)(implicit p: Parameters) extends CoreMod
   val h2s_out = h2s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
   val s2d_out = s2d.map(f => RegEnable(FType.D.ieee(f.io.out), s1_valid))
 
-  val bf162e5m2_out = bf162e5m2.map(f => RegEnable(saturateE5M2(FType.E5M2.ieee(f.io.out), false.B), s1_valid)) // TODO: Saturate
-  val bf162e4m3_out = bf162e5m3.zip(bf162e4m3).map(f => RegEnable(assembleOFPE4M3(FType.E5M3.ieee(f._1.io.out), FType.E4M3.ieee(f._2.io.out), false.B), s1_valid)) // TODO: Saturate
+  val bf162e5m2_out = bf162e5m2.map(f => RegEnable(saturateE5M2(FType.E5M2.ieee(f.io.out), s1_widen), s1_valid))
+  val bf162e4m3_out = bf162e5m3.zip(bf162e4m3).map(f => RegEnable(assembleOFPE4M3(FType.E5M3.ieee(f._1.io.out), FType.E4M3.ieee(f._2.io.out), s1_widen), s1_valid))
   val s2bf16_out = s2bf16.map(f => RegEnable(FType.BF16.ieee(f.io.out), s1_valid))
   val s2h_out = s2h.map(f => RegEnable(FType.H.ieee(f.io.out), s1_valid))
   val d2s_out = d2s.map(f => RegEnable(FType.S.ieee(f.io.out), s1_valid))
@@ -271,11 +271,11 @@ class FPConvBlock(mxConversion: Boolean)(implicit p: Parameters) extends CoreMod
       exc := VecInit(Seq.fill(2)(d2i_exc(0)) ++ Seq.fill(2)(h2i_exc(0)) ++ Seq.fill(2)(s2i_exc(0)) ++ Seq.fill(2)(h2i_exc(1)))
     }
   } .otherwise {
-    when (s2_out_eew === 3.U) {
+    when (s2_widen && !s2_narrow && s2_out_eew === 3.U) {
       out := s2d_out(0)
       exc := VecInit.fill(8)(s2d_exc(0))
     }
-    when (s2_widen && s2_out_eew === 2.U) {
+    when (s2_widen && !s2_narrow && s2_out_eew === 2.U) {
       if (mxConversion) {
         out := Mux(s2_altfmt, VecInit(bf162s_out).asUInt, VecInit(h2s_out).asUInt)
         for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162s_exc(i/4), h2s_exc(i/4)) }
@@ -285,7 +285,7 @@ class FPConvBlock(mxConversion: Boolean)(implicit p: Parameters) extends CoreMod
       }
     }
     if (mxConversion) {
-      when (s2_widen && s2_out_eew === 1.U) {
+      when (s2_widen && !s2_narrow && s2_out_eew === 1.U) {
         out := VecInit(fp82bf16_out).asUInt
         for (i <- 0 until 8) { exc(i) := fp82bf16_exc(i/2) }
       }
@@ -295,7 +295,7 @@ class FPConvBlock(mxConversion: Boolean)(implicit p: Parameters) extends CoreMod
       out := d2s_out(0)
       exc := VecInit.fill(8)(d2s_exc(0))
     }
-    when (!s2_widen && s2_out_eew === 1.U) {
+    when (s2_narrow && s2_out_eew === 1.U) {
       if (mxConversion) {
         out := VecInit(s2h_out.zip(s2bf16_out).map(o => 0.U(16.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
         for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, s2bf16_exc(i/4), s2h_exc(i/4)) }
@@ -305,7 +305,7 @@ class FPConvBlock(mxConversion: Boolean)(implicit p: Parameters) extends CoreMod
       }
     }
     if (mxConversion) {
-      when (!s2_widen && s2_out_eew === 0.U) {
+      when (s2_narrow && s2_out_eew === 0.U) {
         out := VecInit(bf162e4m3_out.zip(bf162e5m2_out).map(o => 0.U(8.W) ## Mux(s2_altfmt, o._2, o._1))).asUInt
         for (i <- 0 until 8) { exc(i) := Mux(s2_altfmt, bf162e5m2_exc(i/2), bf162e4m3_exc(i/2)) }
       }
@@ -340,7 +340,7 @@ class FPConvPipe(mxConversion: Boolean)(implicit p: Parameters) extends Pipeline
   val conv_blocks = Seq.fill(dLen/64) { Module(new FPConvBlock(mxConversion)) }
   conv_blocks.zipWithIndex.foreach { case (c,i) =>
     c.io.valid := io.pipe(0).valid
-    c.io.in := Mux(ctrl_widen,
+    c.io.in := Mux(ctrl_widen && !ctrl_narrow,
       expanded_rvs2_data,
       rvs2_data)((i*64)+63,i*64)
 
