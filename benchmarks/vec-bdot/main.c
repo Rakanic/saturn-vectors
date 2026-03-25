@@ -67,6 +67,24 @@ void matmul_bdot_multi_acc_unroll_m_32_rescheduled_old(int check) {
 
     // Load first VS2
     uint8_t *b_base = b;
+    uint8_t *b_base2;
+    asm volatile("vle8.v v0, (%0)" :: "r"(b_base));
+    b_base += N;
+    asm volatile("vle8.v v1, (%0)" :: "r"(b_base));
+    b_base += N;
+    asm volatile("vle8.v v2, (%0)" :: "r"(b_base));
+    b_base += N;
+    asm volatile("vle8.v v3, (%0)" :: "r"(b_base));
+    b_base += N;
+    asm volatile("vle8.v v4, (%0)" :: "r"(b_base));
+    b_base += N;
+    asm volatile("vle8.v v5, (%0)" :: "r"(b_base));
+    b_base += N;
+    asm volatile("vle8.v v6, (%0)" :: "r"(b_base));
+    b_base += N;
+    asm volatile("vle8.v v7, (%0)" :: "r"(b_base));
+    b_base += N;
+
     asm volatile("vle8.v v24, (%0)" :: "r"(b_base));
     b_base += N;
     asm volatile("vle8.v v25, (%0)" :: "r"(b_base));
@@ -83,28 +101,22 @@ void matmul_bdot_multi_acc_unroll_m_32_rescheduled_old(int check) {
     b_base += N;
     asm volatile("vle8.v v31, (%0)" :: "r"(b_base));
 
-    for (int j = 0; j < N; j += 8) {
+    for (int j = 0; j < N; j += 16) {
         int j_N = j * N;
-        for (int i = 0; i < N; i += 32) {
+        int j_N2 = j_N + 8 * N;
+        for (int i = 0; i < N; i += 16) {
             int i_N = i * N;
             uint32_t *res_base = res + i_N + j;
+            uint32_t *res_base2 = res_base + 8;
             VDOTSETZEROBC_VV();
             int k;
 
             for (k = 0; k < N - vl; k += vl) {
                 uint8_t *a_base = a + k + i_N;
                 b_base = b + k + vl + j_N; // The b_base for the next iteration
-
-                // Move in VS2 from buffer
-                VSETVLI_ALTFMT_X0(vl * 8, SEW_E8, LMUL_M8, 0);
-                asm volatile("vmv.v.v v0, v24");
-                VSETVLI_ALTFMT_X0(vl, SEW_E8, LMUL_M1, 0);
+                b_base2 = b + k + vl + j_N2;
 
                 // Load VS1 and accumulate
-                asm volatile("vle8.v v24, (%0)" :: "r"(b_base));
-                b_base += N;
-                asm volatile("vle8.v v25, (%0)" :: "r"(b_base));
-                b_base += N;
 
                 asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
                 a_base += N;
@@ -123,11 +135,7 @@ void matmul_bdot_multi_acc_unroll_m_32_rescheduled_old(int check) {
                 asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
                 a_base += N;
                 VQBDOTUA_VV(X0, V3, V8);
-
-                asm volatile("vle8.v v26, (%0)" :: "r"(b_base));
-                b_base += N;
-                asm volatile("vle8.v v27, (%0)" :: "r"(b_base));
-                b_base += N;
+                VQBDOTUA_VV(X16, V27, V8);
 
                 asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
                 a_base += N;
@@ -144,70 +152,52 @@ void matmul_bdot_multi_acc_unroll_m_32_rescheduled_old(int check) {
                 asm volatile("vle8.v v14, (%0)" :: "r"(a_base));
                 a_base += N;
                 asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
-                a_base += N;
                 VQBDOTUA_VV(X8, V3, V8);
+                VQBDOTUA_VV(X24, V27, V8);
 
-                asm volatile("vle8.v v28, (%0)" :: "r"(b_base));
+                // Load next VS2
+                asm volatile("vle8.v v0, (%0)" :: "r"(b_base));
                 b_base += N;
-                asm volatile("vle8.v v29, (%0)" :: "r"(b_base));
+                asm volatile("vle8.v v1, (%0)" :: "r"(b_base));
                 b_base += N;
-
-                asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v9, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v10, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v11, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v12, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v13, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v14, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
-                a_base += N;
-                VQBDOTUA_VV(X16, V3, V8);
-
-                asm volatile("vle8.v v30, (%0)" :: "r"(b_base));
+                asm volatile("vle8.v v2, (%0)" :: "r"(b_base));
                 b_base += N;
-                asm volatile("vle8.v v31, (%0)" :: "r"(b_base));
+                asm volatile("vle8.v v3, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v4, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v5, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v6, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v7, (%0)" :: "r"(b_base));
 
-                asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v9, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v10, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v11, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v12, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v13, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v14, (%0)" :: "r"(a_base));
-                a_base += N;
-                asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
-                VQBDOTUA_VV(X24, V3, V8);
+                asm volatile("vle8.v v24, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v25, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v26, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v27, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v28, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v29, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v30, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v31, (%0)" :: "r"(b_base2));
             }
             
             uint8_t *a_base = a + k + i_N;
             b_base = b + j_N; // The b_base for the next iteration
-            if (i == N - 32) {
-                b_base += N * 8;
+            b_base2 = b + j_N2;
+            if (i == N - 16) {
+                b_base += N * 16;
+                b_base2 += N * 16;
             }
 
-            // Move in VS2 from buffer
-            VSETVLI_ALTFMT_X0(vl * 8, SEW_E8, LMUL_M8, 0);
-            asm volatile("vmv.v.v v0, v24");
-            VSETVLI_ALTFMT_X0(vl, SEW_E8, LMUL_M1, 0);
-
             // Load VS1 and accumulate
-            asm volatile("vle8.v v24, (%0)" :: "r"(b_base));
-            b_base += N;
-            asm volatile("vle8.v v25, (%0)" :: "r"(b_base));
-            b_base += N;
             
             asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
             a_base += N;
@@ -225,31 +215,10 @@ void matmul_bdot_multi_acc_unroll_m_32_rescheduled_old(int check) {
             a_base += N;
             asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
             a_base += N;
+
             VQBDOTUA_VV(X0, V3, V8);
+            VSETVLI_ALTFMT_X0(8, SEW_E32, LMUL_M1, 0);
             VDOTWB_VV(V16, X0, X3);
-
-            asm volatile("vle8.v v26, (%0)" :: "r"(b_base));
-            b_base += N;
-            asm volatile("vle8.v v27, (%0)" :: "r"(b_base));
-            b_base += N;
-
-            asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v9, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v10, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v11, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v12, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v13, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v14, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
-            a_base += N;
-            VSETVLI_ALTFMT_X0(8, SEW_E32, LMUL_M8, 0);
             asm volatile("vse32.v v16, (%0)" :: "r"(res_base));
             res_base += N;
             asm volatile("vse32.v v17, (%0)" :: "r"(res_base));
@@ -267,32 +236,47 @@ void matmul_bdot_multi_acc_unroll_m_32_rescheduled_old(int check) {
             asm volatile("vse32.v v23, (%0)" :: "r"(res_base));
             res_base += N;
             VSETVLI_ALTFMT_X0(vl, SEW_E8, LMUL_M1, 0);
-
+            VQBDOTUA_VV(X16, V27, V8);
+            VSETVLI_ALTFMT_X0(8, SEW_E32, LMUL_M1, 0);
+            VDOTWB_VV(V8, X16, X3);
+            asm volatile("vse32.v v8, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v9, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v10, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v11, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v12, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v13, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v14, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v15, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            
+            VSETVLI_ALTFMT_X0(vl, SEW_E8, LMUL_M1, 0);
+            asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
+            a_base += N;
+            asm volatile("vle8.v v9, (%0)" :: "r"(a_base));
+            a_base += N;
+            asm volatile("vle8.v v10, (%0)" :: "r"(a_base));
+            a_base += N;
+            asm volatile("vle8.v v11, (%0)" :: "r"(a_base));
+            a_base += N;
+            asm volatile("vle8.v v12, (%0)" :: "r"(a_base));
+            a_base += N;
+            asm volatile("vle8.v v13, (%0)" :: "r"(a_base));
+            a_base += N;
+            asm volatile("vle8.v v14, (%0)" :: "r"(a_base));
+            a_base += N;
+            asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
+            a_base += N;
+            
             VQBDOTUA_VV(X8, V3, V8);
+            VSETVLI_ALTFMT_X0(8, SEW_E32, LMUL_M1, 0);
             VDOTWB_VV(V16, X8, X3);
-
-            asm volatile("vle8.v v28, (%0)" :: "r"(b_base));
-            b_base += N;
-            asm volatile("vle8.v v29, (%0)" :: "r"(b_base));
-            b_base += N;
-
-            asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v9, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v10, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v11, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v12, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v13, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v14, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
-            a_base += N;
-            VSETVLI_ALTFMT_X0(8, SEW_E32, LMUL_M1, 0);
             asm volatile("vse32.v v16, (%0)" :: "r"(res_base));
             res_base += N;
             asm volatile("vse32.v v17, (%0)" :: "r"(res_base));
@@ -308,73 +292,63 @@ void matmul_bdot_multi_acc_unroll_m_32_rescheduled_old(int check) {
             asm volatile("vse32.v v22, (%0)" :: "r"(res_base));
             res_base += N;
             asm volatile("vse32.v v23, (%0)" :: "r"(res_base));
-            res_base += N;
             VSETVLI_ALTFMT_X0(vl, SEW_E8, LMUL_M1, 0);
-
-            VQBDOTUA_VV(X16, V3, V8);
-            VDOTWB_VV(V16, X16, X3);
-
-            asm volatile("vle8.v v30, (%0)" :: "r"(b_base));
-            b_base += N;
-            asm volatile("vle8.v v31, (%0)" :: "r"(b_base));
-
-            asm volatile("vle8.v v8, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v9, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v10, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v11, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v12, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v13, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v14, (%0)" :: "r"(a_base));
-            a_base += N;
-            asm volatile("vle8.v v15, (%0)" :: "r"(a_base));
-            a_base += N;
+            VQBDOTUA_VV(X24, V27, V8);
             VSETVLI_ALTFMT_X0(8, SEW_E32, LMUL_M1, 0);
-            asm volatile("vse32.v v16, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v17, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v18, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v19, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v20, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v21, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v22, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v23, (%0)" :: "r"(res_base));
-            res_base += N;
-            VSETVLI_ALTFMT_X0(vl, SEW_E8, LMUL_M1, 0);
-
-            VQBDOTUA_VV(X24, V3, V8);
-            VDOTWB_VV(V16, X24, X3);
+            VDOTWB_VV(V8, X24, X3);
+            asm volatile("vse32.v v8, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v9, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v10, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v11, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v12, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v13, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v14, (%0)" :: "r"(res_base2));
+            res_base2 += N;
+            asm volatile("vse32.v v15, (%0)" :: "r"(res_base2));
+            res_base2 += N;
 
             // Writeback
 
-            VSETVLI_ALTFMT_X0(8, SEW_E32, LMUL_M1, 0);
+            if (!(j == N - 16 && i == N - 16)) {
+                VSETVLI_ALTFMT_X0(vl, SEW_E8, LMUL_M1, 0);
+                asm volatile("vle8.v v0, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v1, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v2, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v3, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v4, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v5, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v6, (%0)" :: "r"(b_base));
+                b_base += N;
+                asm volatile("vle8.v v7, (%0)" :: "r"(b_base));
 
-            asm volatile("vse32.v v16, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v17, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v18, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v19, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v20, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v21, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v22, (%0)" :: "r"(res_base));
-            res_base += N;
-            asm volatile("vse32.v v23, (%0)" :: "r"(res_base));
+                asm volatile("vle8.v v24, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v25, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v26, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v27, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v28, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v29, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v30, (%0)" :: "r"(b_base2));
+                b_base2 += N;
+                asm volatile("vle8.v v31, (%0)" :: "r"(b_base2));
+            }
         }
     }
 
