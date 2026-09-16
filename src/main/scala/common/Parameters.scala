@@ -404,13 +404,7 @@ case class VectorParams(
     saturn.insns.QLDOTSA.VV,
     saturn.insns.QBDOTUA.VV,
     saturn.insns.QBDOTSA.VV)
-  def bdotWBInsns = Seq(
-    saturn.insns.DOTSET.VV,
-    saturn.insns.DOTSETZERO.VV,
-    saturn.insns.DOTSETBC.VV,
-    saturn.insns.DOTSETZEROBC.VV,
-    saturn.insns.DOTWB.VV)
-  def supported_ex_insns = issStructure.generate(this).map(_.insns).flatten ++ (if (useOpu) opuInsns else Nil) ++ (if (useBDot) bdotInsns ++ bdotWBInsns else Nil)
+  def supported_ex_insns = issStructure.generate(this).map(_.insns).flatten ++ (if (useOpu) opuInsns else Nil) ++ (if (useBDot) bdotInsns else Nil)
 
   def vExts = 
     (if (useMxConversion) Seq("zvfofp8min", "zfbfmin", "zvfbfmin", "zvfbfa") else Seq()) ++
@@ -451,7 +445,7 @@ trait HasVectorParams extends HasVectorConsts { this: HasCoreParameters =>
   def vrfBankBits = log2Ceil(vParams.vrfBanking)
   def lsiqIdBits = log2Ceil(vParams.vliqEntries.max(vParams.vsiqEntries))
   val debugIdSz = 16
-  def nRelease = vParams.issStructure.generate(vParams).map(_.seqs.size).reduce(_+_) + 2 + (if (useOpu) 1 else 0) + (if (useBDot) 2 else 0) // load/stores/opu
+  def nRelease = vParams.issStructure.generate(vParams).map(_.seqs.size).reduce(_+_) + 2 + (if (useOpu) 1 else 0) + (if (useBDot) 1 else 0) // load/stores/opu
 
   def getEgId(vreg: UInt, eidx: UInt, eew: UInt, bitwise: Bool): UInt = {
     val base = vreg << log2Ceil(egsPerVReg)

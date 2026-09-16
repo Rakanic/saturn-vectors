@@ -164,6 +164,8 @@
 	asm volatile(".insn r 0x77, 0x0, 0x5c, " as ", " rs1 ", " rs2)
 #define VQBDOTSA_VV(as, rs2, rs1) \
 	asm volatile(".insn r 0x77, 0x0, 0x5e, " as ", " rs1 ", " rs2)
+#define VQBDOTUA_VV_COMPLIANT(vd, vs2, vs1) \
+	asm volatile(".insn r 0x77, 0x0, 0x5c, " vd ", " vs1 ", " vs2)
 
 // opu
 

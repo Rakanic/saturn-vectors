@@ -78,20 +78,17 @@ class BDotSequencerControl(implicit p: Parameters) extends CoreBundle()(p) with 
   val fp = Input(Bool())
   val altfmt = Input(Bool())
   val signed = Input(Bool())
-  val batched = Input(Bool())
-  val in_eew = Input(UInt(2.W))
-  val acc_sel = Input(UInt(5.W))
+  val acc_sel = Input(UInt(1.W))
+  val acc_eidx = Input(UInt(log2Ceil(egsPerVReg).W))
+  val set_acc = Input(Bool())
   val vl = Input(UInt((1+log2Ceil(maxVLMax)).W))
 }
 
 class BDotWBSequencerControl(implicit p: Parameters) extends CoreBundle()(p) with HasVectorParams {
   val base_eg = Input(UInt(log2Ceil(32 * vLen / dLen).W))
-  val set_acc = Input(Bool())
-  val set_acc_zero = Input(Bool())
-  val set_acc_bc = Input(Bool())
   val writeback = Input(Bool())
-  val in_eew = Input(UInt(2.W))
-  val acc_sel = Input(UInt(5.W))
+  val acc_sel = Input(UInt(1.W))
+  val acc_eidx = Input(UInt(log2Ceil(egsPerVReg).W))
 }
 
 class BDotUnit(pipe_depth: Int, acc_delay: Int)(implicit p: Parameters) extends CoreModule()(p) with HasVectorParams {
@@ -110,17 +107,18 @@ class BDotUnit(pipe_depth: Int, acc_delay: Int)(implicit p: Parameters) extends 
 
   val ready = RegInit(true.B)
 
-  val accumulator = Reg(Vec(32, Vec(8, UInt(32.W))))
+  val accumulator = Reg(Vec(2, Vec(8, UInt(32.W))))
+  val accumulator_in = Reg(Vec(2, Vec(8, UInt(32.W))))
 
   val int8_out = Wire(Vec(8, UInt(32.W)))
   val int8_out_en = Wire(Bool())
   for (i <- 0 until 8) {
     val int8_pipe = Module(new IntegerDotPipe(pipe_depth, acc_delay, 8, 32))
-    int8_pipe.io.valid := io.op.fire && !io.op.bits.fp && io.op.bits.in_eew === 0.U
+    int8_pipe.io.valid := io.op.fire && !io.op.bits.fp
     int8_pipe.io.signed_a := io.op.bits.altfmt
     int8_pipe.io.signed_b := io.op.bits.signed
     int8_pipe.io.in_a := io.rvs1_data
-    int8_pipe.io.in_b := Mux(io.op.bits.batched, io.batch_vs2_data(i), if (i == 0) io.rvs2_data else 0.U)
+    int8_pipe.io.in_b := io.batch_vs2_data(i)
     val acc_sel_pipe = Pipe(io.op.fire, io.op.bits.acc_sel, pipe_depth)
     int8_pipe.io.acc := accumulator(acc_sel_pipe.bits)(i.U)
     int8_pipe.io.vl := io.op.bits.vl
@@ -132,8 +130,6 @@ class BDotUnit(pipe_depth: Int, acc_delay: Int)(implicit p: Parameters) extends 
 
   val ready_pipe = Pipe(io.op.fire, 0.U, acc_delay - 1)
 
-  val acc_eidx = RegInit(0.U(3.W))
-  val acc_write_eidx = RegInit(0.U(3.W))
   val acc_sel_pipe = Module(new AccumulatorSelectPipe(pipe_depth + acc_delay - 1))
   acc_sel_pipe.io.valid := io.op.fire
   acc_sel_pipe.io.acc_in := io.op.bits.acc_sel
@@ -146,50 +142,31 @@ class BDotUnit(pipe_depth: Int, acc_delay: Int)(implicit p: Parameters) extends 
 
   when (io.op.fire) {
     ready := (acc_delay == 1).B
-  } .elsewhen (ready_pipe.valid) {
-    ready := true.B
-  }
-
-  when (io.wb_op.fire) {
-    when (io.wb_op.bits.set_acc || io.wb_op.bits.writeback) {
-      acc_eidx := Mux(io.wb_op.bits.set_acc && io.wb_op.bits.set_acc_zero, acc_eidx, acc_eidx + Mux(io.wb_op.bits.in_eew === 3.U, (dLen/64).U, (dLen/32).U))
-    }
-    when (io.wb_op.bits.set_acc) {
-      for (x <- 0 until 32) {
-        when (io.wb_op.bits.acc_sel === x.U || io.wb_op.bits.set_acc_bc) {
+    when (io.op.bits.set_acc) {
+      for (x <- 0 until 2) {
+        when (io.op.bits.acc_sel === x.U) {
           for (i <- 0 until 8) {
-            when (io.wb_op.bits.set_acc_zero) { // Zero
-              accumulator(x.U)(i.U) := 0.U
-            } .elsewhen (io.wb_op.bits.in_eew === 3.U) { // 64-bit
-
-            } .otherwise { // 32-bit
-              val group = (i / (dLen/32)) * (dLen/32)
-              val idx = i % (dLen/32)
-              when (acc_eidx === group.U) {
-                accumulator(x.U)(i.U) := io.rvd_data((idx + 1) * 32 - 1, idx * 32)
-              }
+            val group = (i / (dLen/32)) * (dLen/32)
+            val idx = i % (dLen/32)
+            when (io.op.bits.acc_eidx === group.U) {
+              accumulator(x.U)(i.U) := io.rvd_data((idx + 1) * 32 - 1, idx * 32)
             }
           }
         }
       }
     }
+  } .elsewhen (ready_pipe.valid) {
+    ready := true.B
   }
 
   val out = Wire(Vec(dLen / 32, UInt(32.W)))
 
-  when (io.wb_op.bits.in_eew === 3.U) {
-    for (i <- 0 until dLen/64) {
-      out(2 * i) := accumulator(io.wb_op.bits.acc_sel)(acc_eidx + i.U)
-      out(2 * i + 1) := accumulator(io.wb_op.bits.acc_sel + 1.U)(acc_eidx + i.U)
-    }
-  } .otherwise {
-    for (i <- 0 until dLen/32) {
-      out(i) := accumulator(io.wb_op.bits.acc_sel)(acc_eidx + i.U)
-    }
+  for (i <- 0 until dLen/32) {
+    out(i) := accumulator(io.wb_op.bits.acc_sel)(io.wb_op.bits.acc_eidx + i.U) + accumulator_in(io.wb_op.bits.acc_sel)(io.wb_op.bits.acc_eidx + i.U)
   }
 
   io.op.ready := ready
-  io.wb_op.ready := true.B // !(acc_sel_pipe.io.in_flight(io.wb_op.bits.acc_sel) || (io.wb_op.bits.set_acc_bc && acc_sel_pipe.io.in_flight.orR))
+  io.wb_op.ready := !acc_sel_pipe.io.in_flight(io.wb_op.bits.acc_sel)
   io.in_flight := acc_sel_pipe.io.in_flight
 
   io.write.valid := io.wb_op.fire && io.wb_op.bits.writeback
