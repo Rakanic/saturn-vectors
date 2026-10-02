@@ -66,7 +66,8 @@ object VectorParams {
     vliqEntries = 16,
     vsiqEntries = 32,
     vrfBanking = 8,
-    useBDot = true
+    useBDot = true,
+    nBDotSeqs = 4
   )
 
   def opuParams = mxParams.copy(
@@ -392,6 +393,9 @@ case class VectorParams(
 
   // Add batch dot product unit
   useBDot: Boolean = false,
+  nBDotSeqs: Int = 0,
+  bdotPipeDepth: Int = 2,
+  bdotAccDelay: Int = 1,
 ) {
   def opuInsns = Seq(
     saturn.insns.OPMACC.VV,
@@ -417,6 +421,13 @@ case class VectorParams(
   require((dLen & (dLen - 1)) == 0, "dLen must be power of 2")
   require(mLen >= 64 && mLen <= 512, "mLen must be >= 64 and <= 512")
   require((mLen & (mLen - 1)) == 0, "mLen must be power of 2")
+
+  if (useBDot) {
+    require(vrfBanking == 8, "useBDot requires vrfBanking == 8")
+    require(nBDotSeqs > 0, "useBDot requires nBDotSeqs > 0")
+  } else {
+    require(nBDotSeqs == 0, "disabling useBDot requires nBDotSeqs == 0")
+  }
 }
 
 case object VectorParamsKey extends Field[VectorParams]
@@ -435,6 +446,9 @@ trait HasVectorParams extends HasVectorConsts { this: HasCoreParameters =>
 
   def useOpu = vParams.useOpu
   def useBDot = vParams.useBDot
+  def nBDotSeqs = vParams.nBDotSeqs
+  def bdotPipeDepth = vParams.bdotPipeDepth
+  def bdotAccDelay = vParams.bdotAccDelay
 
   def opuParams = OPUParameters()
 
@@ -445,7 +459,7 @@ trait HasVectorParams extends HasVectorConsts { this: HasCoreParameters =>
   def vrfBankBits = log2Ceil(vParams.vrfBanking)
   def lsiqIdBits = log2Ceil(vParams.vliqEntries.max(vParams.vsiqEntries))
   val debugIdSz = 16
-  def nRelease = vParams.issStructure.generate(vParams).map(_.seqs.size).reduce(_+_) + 2 + (if (useOpu) 1 else 0) + (if (useBDot) 1 else 0) // load/stores/opu
+  def nRelease = vParams.issStructure.generate(vParams).map(_.seqs.size).reduce(_+_) + 2 + (if (useOpu) 1 else 0) + (if (useBDot) nBDotSeqs else 0) // load/stores/opu
 
   def getEgId(vreg: UInt, eidx: UInt, eew: UInt, bitwise: Bool): UInt = {
     val base = vreg << log2Ceil(egsPerVReg)

@@ -5,7 +5,7 @@ from typing import TextIO
 
 m = 32
 n = 32
-k = 32
+k = 64
 
 a = [random.randrange(256) for _ in range(m * k)]
 b = [random.randrange(256) for _ in range(n * k)]
