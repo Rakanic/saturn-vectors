@@ -180,12 +180,6 @@ class BDotUnit(pipe_depth: Int, acc_delay: Int)(implicit p: Parameters) extends 
     }
   }
 
-  // when (io.op.fire) {
-  //   when (io.op.head) {
-  //     acc_buffer := io.op.bits.acc_in.asTypeOf(acc_buffer)
-  //   }
-  // }
-
   val tail_pipe = Pipe(io.op.fire && io.op.bits.tail_in, io.sequencer_idx, pipe_depth + acc_delay)
 
   io.op.ready := true.B

@@ -40,6 +40,7 @@ class BDotSequencer()(implicit p: Parameters) extends Sequencer[BDotSequencerCon
   val rvs1_mask = Reg(UInt(egsTotal.W))
   val rvs2_mask = Reg(UInt(egsTotal.W))
   val rvd_mask = Reg(UInt(egsTotal.W))
+  val ci = Reg(UInt(3.W))
 
   val altfmt = Reg(Bool())
   val signed = Reg(Bool())
@@ -80,8 +81,9 @@ class BDotSequencer()(implicit p: Parameters) extends Sequencer[BDotSequencerCon
     altfmt := dis_inst.vconfig.vtype.altfmt
     signed := dis_ctrl.bool(BDotSigned)
 
+    val dis_inst_ci = dis_inst.rs2(2, 0)
     val dis_vs1_arch_mask = get_arch_mask(dis_inst.rs1, 0.U)
-    val dis_vs2_arch_mask = get_arch_mask(dis_inst.rs2, 3.U)
+    val dis_vs2_arch_mask = get_arch_mask(dis_inst.rs2(4, 3) & "h18".U(5.W), 3.U)
     val dis_vd_arch_mask = get_arch_mask(dis_inst.rd, 0.U)
 
     valid := true.B
@@ -94,7 +96,11 @@ class BDotSequencer()(implicit p: Parameters) extends Sequencer[BDotSequencerCon
 
     rvs1_mask := FillInterleaved(egsPerVReg, dis_vs1_arch_mask)
     rvs2_mask := FillInterleaved(egsPerVReg, dis_vs2_arch_mask)
-    rvd_mask := FillInterleaved(egsPerVReg, dis_vd_arch_mask)
+    // rvd_mask := FillInterleaved(egsPerVReg, dis_vd_arch_mask)
+    val rvd_shift = (dis_inst_ci * ((8 * 32) / dLen).U)
+    val rvd_width = (1 << ((8 * 32) / dLen)) - 1
+    rvd_mask := VecInit(dis_vd_arch_mask.asBools.map { case b => Mux(b, (rvd_width.U << rvd_shift)(egsPerVReg-1, 0), 0.U(egsPerVReg.W)) }).asUInt
+    ci := dis_inst_ci
   } .elsewhen (tail) {
     valid := false.B
   }
@@ -152,8 +158,8 @@ class BDotSequencer()(implicit p: Parameters) extends Sequencer[BDotSequencerCon
   val oldest = inst.vat === io.vat_head
 
   val current_rvs1 = (inst.rs1 << log2Ceil(egsPerVReg)) + data_eg_idx
-  val current_rvd = (inst.rd << log2Ceil(egsPerVReg)) + acc_eg_idx
-  val current_wvd = (inst.rd << log2Ceil(egsPerVReg)) + wb_eg_idx
+  val current_rvd = (inst.rd << log2Ceil(egsPerVReg)) + acc_eg_idx + (ci * ((8 * 32) / dLen).U)
+  val current_wvd = (inst.rd << log2Ceil(egsPerVReg)) + wb_eg_idx + (ci * ((8 * 32) / dLen).U)
 
   io.rvs1.valid := valid && renv1 && acc_load_done
   io.rvs1.bits.eg := current_rvs1

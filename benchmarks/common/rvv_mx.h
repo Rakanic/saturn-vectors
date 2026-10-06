@@ -148,24 +148,8 @@
 
 // bdot
 
-#define VDOTSET_VV(rd, as) \
-	asm volatile(".insn r 0x77, 0x0, 0x00, " rd ", x0, " as)
-#define VDOTSETZERO_VV(as) \
-	asm volatile(".insn r 0x77, 0x0, 0x00, x0, x8, " as)
-#define VDOTSETZEROBC_VV() \
-	asm volatile(".insn r 0x77, 0x0, 0x00, x0, x24, x0")
-#define VDOTWB_VV(rd, as, rs1) \
-	asm volatile(".insn r 0x77, 0x0, 0x02, " rd ", " rs1 ", " as)
-#define VQLDOTUA_VV(as, rs2, rs1) \
-	asm volatile(".insn r 0x77, 0x0, 0x4c, " as ", " rs1 ", " rs2)
-#define VQLDOTSA_VV(as, rs2, rs1) \
-	asm volatile(".insn r 0x77, 0x0, 0x4e, " as ", " rs1 ", " rs2)
-#define VQBDOTUA_VV(as, rs2, rs1) \
-	asm volatile(".insn r 0x77, 0x0, 0x5c, " as ", " rs1 ", " rs2)
-#define VQBDOTSA_VV(as, rs2, rs1) \
-	asm volatile(".insn r 0x77, 0x0, 0x5e, " as ", " rs1 ", " rs2)
-#define VQBDOTUA_VV_COMPLIANT(vd, vs2, vs1) \
-	asm volatile(".insn r 0x77, 0x0, 0x5c, " vd ", " vs1 ", " vs2)
+#define VQBDOTUA_VV(vd, vs2, vs1) \
+	asm volatile(".insn r 0x77, 0x0, 0x5d, " vd ", " vs1 ", " vs2)
 
 // opu
 
