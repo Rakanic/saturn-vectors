@@ -3,9 +3,9 @@
 import random
 from typing import TextIO
 
-m = 32
+m = 28
 n = 32
-k = 64
+k = 512
 
 a = [random.randrange(256) for _ in range(m * k)]
 b = [random.randrange(256) for _ in range(n * k)]
