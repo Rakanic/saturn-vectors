@@ -3,7 +3,7 @@
 import random
 from typing import TextIO
 
-m = 28
+m = 32
 n = 32
 k = 512
 

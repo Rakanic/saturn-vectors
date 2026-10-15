@@ -66,7 +66,7 @@ class BDotSequencer()(implicit p: Parameters) extends Sequencer[BDotSequencerCon
   val acc_buffer = Reg(Vec(acc_egs, UInt(dLen.W)))
 
   val head = valid && acc_eg_idx === 0.U
-  val tail = valid && wb_store_tail && !wb_store_done
+  val tail = valid && wb_store_tail && !wb_store_done && io.write.fire
   val busy = valid
 
   io.dis.ready := (!busy || tail) && !io.dis_stall
